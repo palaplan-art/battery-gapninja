@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — GAPNINJA Battery Log</title>
+<link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login-card" method="post" action="/login">
+    <div class="login-brand">
+      <span class="brand-mark">GN</span>
+      <div class="brand-text">
+        <strong>GAPNINJA</strong>
+        <span>Battery History Log</span>
+      </div>
+    </div>
+    <h1>Sign in</h1>
+    {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="username" autofocus required />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password" required />
+    </div>
+    <button class="btn primary login-submit" type="submit">Sign in</button>
+  </form>
+</div>
+</body>
+</html>

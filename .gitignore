@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+battery_log.db
+.env
+server.log
