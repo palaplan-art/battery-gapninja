@@ -66,6 +66,13 @@ app.include_router(machines.router, dependencies=[Depends(require_auth)])
 app.include_router(dashboard.router, dependencies=[Depends(require_auth)])
 
 
+@app.get("/healthz")
+def healthz():
+    """Public, dependency-free health check. Used by an external scheduler
+    (Power Automate) to keep the free Render instance from sleeping."""
+    return {"status": "ok"}
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if is_authenticated(request):
