@@ -349,12 +349,16 @@ def apply_sync(
     }
 
 
-def push_machine(db: Session, machine: models.Machine) -> dict:
+def push_machine(
+    db: Session, machine: models.Machine, force_fields: list[str] | None = None
+) -> dict:
     """Write one machine's app-side values straight back into the sheet.
 
-    Only fields where the sheet still matches the stored baseline are written —
-    if someone edited that cell in Excel since the last sync it is treated as a
-    conflict and left alone for the Sync page to resolve.
+    Fields in `force_fields` are the ones the user just edited in the app, so
+    their values are written unconditionally — pressing Save must land in Excel
+    without a second confirmation. Every other differing field is only written
+    when the sheet still matches the stored baseline; otherwise it is left as a
+    conflict for the Sync page to resolve.
     """
     excel, rows, layout = read_excel_machines()
     columns = layout["columns"]
@@ -369,6 +373,7 @@ def push_machine(db: Session, machine: models.Machine) -> dict:
     base = _baseline(machine)
     never_synced = not base
 
+    force = set(force_fields or [])
     written, conflicts = 0, []
     for field in fields:
         app_val = app_vals.get(field, "")
@@ -376,14 +381,16 @@ def push_machine(db: Session, machine: models.Machine) -> dict:
         base_val = base.get(field, None)
         if app_val == ex_val:
             continue
-        if never_synced and ex_val != "":
-            # No baseline yet: we cannot tell which side is newer, so never
-            # overwrite a non-empty Excel cell — surface it on the Sync page.
-            conflicts.append(field)
-            continue
-        if base_val is not None and ex_val != base_val:
-            conflicts.append(field)  # Excel changed too — leave it for manual review
-            continue
+        if field not in force:
+            # Untouched fields only sync when it is provably safe.
+            if never_synced and ex_val != "":
+                # No baseline yet: we cannot tell which side is newer, so never
+                # overwrite a non-empty Excel cell — surface it on the Sync page.
+                conflicts.append(field)
+                continue
+            if base_val is not None and ex_val != base_val:
+                conflicts.append(field)  # Excel changed too — leave for manual review
+                continue
         value = app_val
         if field == INSTALL_FIELD and value:
             try:

@@ -12,23 +12,31 @@ logger = logging.getLogger("battery.machines")
 router = APIRouter(prefix="/api/machines", tags=["machines"])
 
 
-def _push_machine_to_excel(code: str) -> None:
+def _push_machine_to_excel(code: str, force_fields: list[str] | None = None) -> None:
     """Background task: mirror a machine's fields into the SharePoint workbook.
 
     Runs after the HTTP response is sent so saving a machine stays instant even
-    though the Graph round-trip takes a few seconds. Failures only log — the
-    Sync page can always reconcile later."""
+    though the Graph round-trip takes a few seconds. `force_fields` are the
+    fields the user just edited — those always land in Excel. Failures only
+    log — the Sync page can always reconcile later."""
     db = SessionLocal()
     try:
         machine = crud.get_machine(db, code)
         if machine:
-            excel_sync.push_machine(db, machine)
+            result = excel_sync.push_machine(db, machine, force_fields=force_fields)
+            logger.info("Excel push for %s: %s", code, result)
     except (graph.GraphError, excel_sync.LayoutError) as e:
         logger.warning("Excel push skipped for %s: %s", code, e)
     except Exception:
         logger.exception("Excel push failed for %s", code)
     finally:
         db.close()
+
+
+# Model fields whose edits map to a sheet column. install_date/install_status
+# share the sheet's single "Installation Day" column.
+_SYNCED_MODEL_FIELDS = set(excel_sync.FIELD_HEADERS) - {"install"}
+_INSTALL_MODEL_FIELDS = {"install_date", "install_status"}
 
 
 @router.get("", response_model=list[schemas.MachineOut])
@@ -66,12 +74,26 @@ def update_machine(
     machine = crud.get_machine(db, code.strip().upper())
     if not machine:
         raise HTTPException(404, "Machine not found")
+
+    # Which sheet-backed fields did this save actually change? Those are the
+    # user's explicit edits and must reach Excel without further confirmation.
+    force_fields: set[str] = set()
+    for field, new_value in payload.model_dump(exclude_unset=True).items():
+        if getattr(machine, field, None) == new_value:
+            continue
+        if field in _SYNCED_MODEL_FIELDS:
+            force_fields.add(field)
+        elif field in _INSTALL_MODEL_FIELDS:
+            force_fields.add("install")
+
     machine = crud.update_machine(db, machine, payload)
 
     # Mirror the edit into the SharePoint workbook after the response is sent,
     # so the save itself returns immediately.
     if push_to_excel and graph.is_configured():
-        background_tasks.add_task(_push_machine_to_excel, machine.code)
+        background_tasks.add_task(
+            _push_machine_to_excel, machine.code, sorted(force_fields)
+        )
     return machine
 
 
