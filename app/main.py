@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import inspect, text
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import models  # noqa: F401  (imported so tables register on Base.metadata)
@@ -14,7 +15,28 @@ from .routers import batteries, dashboard, machines
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-Base.metadata.create_all(bind=engine)
+
+def _auto_migrate() -> None:
+    """Lightweight migration: create missing tables, then ADD any columns that
+    exist on the models but not yet in the database. Handles both SQLite and
+    Postgres so new nullable columns roll out on redeploy without manual DDL."""
+    Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    for table in Base.metadata.tables.values():
+        if not inspector.has_table(table.name):
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            col_type = column.type.compile(dialect=engine.dialect)
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f'ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}')
+                )
+
+
+_auto_migrate()
 
 app = FastAPI(title="Battery History Log")
 

@@ -41,9 +41,38 @@ class Machine(Base):
     division: Mapped[str | None] = mapped_column(String(255), nullable=True)
     contact_person: Mapped[str | None] = mapped_column(String(255), nullable=True)
     contact_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    system: Mapped[str | None] = mapped_column(String(64), nullable=True)
     install_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Calibration
+    gauge_block_sn: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_calibration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    next_calibration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Peripherals (from the GAPNINJA control list sheet)
+    wifi_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    wifi_sn: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    barcode_scanner_sn: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pc_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pc_sn_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    logs: Mapped[list["MachineLog"]] = relationship(
+        "MachineLog",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        order_by="desc(MachineLog.timestamp)",
+    )
+
+
+class MachineLog(Base):
+    __tablename__ = "machine_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"))
+    timestamp: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    description: Mapped[str] = mapped_column(Text)
+
+    machine: Mapped["Machine"] = relationship("Machine", back_populates="logs")
 
 
 class Battery(Base):

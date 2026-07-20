@@ -302,15 +302,9 @@ def get_machine(db: Session, code: str) -> models.Machine | None:
 
 
 def create_machine(db: Session, payload: schemas.MachineCreate) -> models.Machine:
-    machine = models.Machine(
-        code=payload.code.strip().upper(),
-        customer=payload.customer,
-        division=payload.division,
-        contact_person=payload.contact_person,
-        contact_phone=payload.contact_phone,
-        install_date=payload.install_date,
-        remark=payload.remark,
-    )
+    data = payload.model_dump()
+    data["code"] = data["code"].strip().upper()
+    machine = models.Machine(**data)
     db.add(machine)
     db.commit()
     db.refresh(machine)
@@ -326,6 +320,52 @@ def update_machine(
     db.commit()
     db.refresh(machine)
     return machine
+
+
+def machine_batteries(db: Session, machine: models.Machine) -> list[models.Battery]:
+    return (
+        db.query(models.Battery)
+        .filter(models.Battery.machine_code == machine.code)
+        .order_by(models.Battery.serial.asc())
+        .all()
+    )
+
+
+def add_machine_log(
+    db: Session, machine: models.Machine, payload: schemas.LogCreate
+) -> models.MachineLog:
+    log = models.MachineLog(machine_id=machine.id, description=payload.description)
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+def get_machine_log(
+    db: Session, machine: models.Machine, log_id: int
+) -> models.MachineLog | None:
+    return (
+        db.query(models.MachineLog)
+        .filter(
+            models.MachineLog.id == log_id,
+            models.MachineLog.machine_id == machine.id,
+        )
+        .first()
+    )
+
+
+def update_machine_log(
+    db: Session, log: models.MachineLog, payload: schemas.LogUpdate
+) -> models.MachineLog:
+    log.description = payload.description
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+def delete_machine_log(db: Session, log: models.MachineLog) -> None:
+    db.delete(log)
+    db.commit()
 
 
 PRIORITY_END_USER = "TBTS"

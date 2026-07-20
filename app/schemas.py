@@ -7,35 +7,49 @@ from .models import ActionType, BatteryStatus
 HEALTH_MAX_MAH = 6000
 
 
-class MachineCreate(BaseModel):
+class MachineFields(BaseModel):
+    customer: str | None = None
+    division: str | None = None
+    contact_person: str | None = None
+    contact_phone: str | None = None
+    system: str | None = None
+    install_date: date | None = None
+    gauge_block_sn: str | None = None
+    last_calibration_date: date | None = None
+    next_calibration_date: date | None = None
+    wifi_model: str | None = None
+    wifi_sn: str | None = None
+    barcode_scanner_sn: str | None = None
+    pc_model: str | None = None
+    pc_sn_tag: str | None = None
+    remark: str | None = None
+
+
+class MachineCreate(MachineFields):
     code: str
-    customer: str | None = None
-    division: str | None = None
-    contact_person: str | None = None
-    contact_phone: str | None = None
-    install_date: date | None = None
-    remark: str | None = None
 
 
-class MachineUpdate(BaseModel):
-    customer: str | None = None
-    division: str | None = None
-    contact_person: str | None = None
-    contact_phone: str | None = None
-    install_date: date | None = None
-    remark: str | None = None
+class MachineUpdate(MachineFields):
+    pass
 
 
-class MachineOut(BaseModel):
+class MachineOut(MachineFields):
     model_config = ConfigDict(from_attributes=True)
 
     code: str
-    customer: str | None = None
-    division: str | None = None
-    contact_person: str | None = None
-    contact_phone: str | None = None
-    install_date: date | None = None
-    remark: str | None = None
+
+
+class MachineLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    timestamp: datetime
+    description: str
+
+
+class MachineDetailOut(MachineOut):
+    logs: list[MachineLogOut] = []
+    batteries: list["BatteryOut"] = []
 
 
 class BatteryCreate(BaseModel):
@@ -139,3 +153,7 @@ class DashboardSummary(BaseModel):
     maintenance: int
     retired: int
     end_users: list[str] = []
+
+
+# Resolve the forward reference to BatteryOut used in MachineDetailOut.
+MachineDetailOut.model_rebuild()

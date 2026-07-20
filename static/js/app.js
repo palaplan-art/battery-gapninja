@@ -48,7 +48,8 @@ function escapeHtml(str) {
 function fmtDate(d) {
   if (!d) return "—";
   const dt = new Date(d + (d.length === 10 ? "T00:00:00" : ""));
-  return dt.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  // e.g. "22 July 2026"
+  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
 function fmtDateTime(d) {
@@ -91,6 +92,8 @@ function route() {
   const hash = location.hash.replace(/^#/, "");
   if (hash.startsWith("battery/")) {
     renderDetail(decodeURIComponent(hash.slice("battery/".length)));
+  } else if (hash.startsWith("machine/")) {
+    renderMachineDetail(decodeURIComponent(hash.slice("machine/".length)));
   } else if (hash === "machines") {
     renderMachines();
   } else {
@@ -251,7 +254,7 @@ async function renderDetail(serial) {
         <div class="form-grid">
           <div class="field-row">
             <div class="field">
-              <label>Machine In Use</label>
+              <label>Machine In Use ${battery.machine_code ? `<a class="inline-link" href="#machine/${encodeURIComponent(battery.machine_code)}">open ${escapeHtml(battery.machine_code)} →</a>` : ""}</label>
               <select id="f-machine">
                 <option value="">— Unassigned —</option>
                 ${state.machines.map((m) => `<option value="${escapeHtml(m.code)}" ${battery.machine_code === m.code ? "selected" : ""}>${escapeHtml(m.code)}${m.customer ? " — " + escapeHtml(m.customer) : ""}</option>`).join("")}
@@ -442,17 +445,46 @@ function testRowHtml(t) {
 
 const TEST_FIELDS = [
   { key: "test_date", label: "Test Date", type: "date" },
-  { key: "charge_full_time", label: "Full Charge Time", type: "text", ph: "e.g. 2:00 hr" },
+  { key: "charge_full_time", label: "Full Charge Time (h:mm)", type: "time" },
   { key: "capacity_after_charge_mah", label: "Capacity After Charge (mAh)", type: "number" },
-  { key: "start_time", label: "Test Start Time", type: "text", ph: "e.g. 09:30" },
-  { key: "first_bar_time", label: "1st Bar Empty", type: "text", ph: "time" },
-  { key: "second_bar_time", label: "2nd Bar Empty", type: "text", ph: "time" },
-  { key: "alert_time", label: "Low Battery Alert", type: "text", ph: "time" },
-  { key: "shutdown_time", label: "Shutdown / Empty", type: "text", ph: "time" },
-  { key: "total_runtime", label: "Total Runtime", type: "text", ph: "e.g. 2:37 hr" },
-  { key: "run_to_zero_time", label: "Run to 0 mAh (duration)", type: "text", ph: "e.g. 2:25 hr" },
+  { key: "start_time", label: "Test Start Time", type: "time" },
+  { key: "first_bar_time", label: "1st Bar Empty", type: "time" },
+  { key: "second_bar_time", label: "2nd Bar Empty", type: "time" },
+  { key: "alert_time", label: "Low Battery Alert", type: "time" },
+  { key: "shutdown_time", label: "Shutdown / Empty", type: "time" },
+  { key: "total_runtime", label: "Total Runtime (h:mm)", type: "time" },
+  { key: "run_to_zero_time", label: "Run to 0 mAh (h:mm)", type: "time" },
   { key: "remark", label: "Remark", type: "textarea" },
 ];
+
+// Two dropdowns (hour 00-23, minute 00-59) that together produce an "HH:MM"
+// string. Works for both clock times and short durations.
+function timeSelectHtml(key, value) {
+  const [hh, mm] = (value || "").split(":");
+  const opt = (n, sel) =>
+    `<option value="${n}" ${sel === n ? "selected" : ""}>${n}</option>`;
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+  const mins = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0"));
+  return `
+    <div class="time-select">
+      <select id="t-${key}-h">
+        <option value="">--</option>
+        ${hours.map((h) => opt(h, hh)).join("")}
+      </select>
+      <span>:</span>
+      <select id="t-${key}-m">
+        <option value="">--</option>
+        ${mins.map((m) => opt(m, mm)).join("")}
+      </select>
+    </div>`;
+}
+
+function readTimeSelect(key) {
+  const h = document.getElementById(`t-${key}-h`).value;
+  const m = document.getElementById(`t-${key}-m`).value;
+  if (!h && !m) return null;
+  return `${h || "00"}:${m || "00"}`;
+}
 
 function openTestModal(serial, test) {
   const editing = !!test;
@@ -461,6 +493,9 @@ function openTestModal(serial, test) {
     const val = t[f.key] ?? "";
     if (f.type === "textarea") {
       return `<div class="field"><label>${f.label}</label><textarea id="t-${f.key}" placeholder="${f.ph || ""}">${escapeHtml(val)}</textarea></div>`;
+    }
+    if (f.type === "time") {
+      return `<div class="field"><label>${f.label}</label>${timeSelectHtml(f.key, val)}</div>`;
     }
     return `<div class="field"><label>${f.label}</label><input id="t-${f.key}" type="${f.type}" value="${escapeHtml(val)}" placeholder="${f.ph || ""}" ${f.type === "number" ? 'min="0" max="6000"' : ""} /></div>`;
   }).join("");
@@ -480,6 +515,10 @@ function openTestModal(serial, test) {
   document.getElementById("save-test-btn").onclick = async () => {
     const payload = {};
     for (const f of TEST_FIELDS) {
+      if (f.type === "time") {
+        payload[f.key] = readTimeSelect(f.key);
+        continue;
+      }
       const raw = document.getElementById(`t-${f.key}`).value;
       if (f.type === "number") {
         payload[f.key] = raw === "" ? null : parseInt(raw, 10);
@@ -567,51 +606,232 @@ function bindTimelineActions(serial) {
 /* ---------------- Machines view ---------------- */
 async function renderMachines() {
   viewRoot.innerHTML = `<div class="loading">Loading...</div>`;
-  const machines = await api("/api/machines");
+  // Machines already come sorted ascending by code from the API.
+  const [machines, batteries] = await Promise.all([
+    api("/api/machines"),
+    api("/api/batteries"),
+  ]);
   state.machines = machines;
+
+  const countByMachine = {};
+  for (const b of batteries) {
+    if (b.machine_code) countByMachine[b.machine_code] = (countByMachine[b.machine_code] || 0) + 1;
+  }
 
   viewRoot.innerHTML = `
     <div class="section-head">
       <h2>Machines</h2>
       <button class="btn primary" id="add-machine-btn">+ Machine</button>
     </div>
-    <div class="machines-table-wrap">
-      <table class="machines-table">
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Customer</th>
-            <th>Division</th>
-            <th>Contact</th>
-            <th>Installed</th>
-            <th>Remark</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${
-            machines.length
-              ? machines.map((m) => `
-                <tr>
-                  <td class="code">${escapeHtml(m.code)}</td>
-                  <td>${escapeHtml(m.customer) || "—"}</td>
-                  <td>${escapeHtml(m.division) || "—"}</td>
-                  <td>${escapeHtml(m.contact_person) || "—"}${m.contact_phone ? ", " + escapeHtml(m.contact_phone) : ""}</td>
-                  <td>${m.install_date ? fmtDate(m.install_date) : "—"}</td>
-                  <td>${escapeHtml(m.remark) || "—"}</td>
-                  <td><button class="edit-link" data-code="${escapeHtml(m.code)}">Edit</button></td>
-                </tr>
-              `).join("")
-              : `<tr><td colspan="7"><div class="empty-state">No machines yet</div></td></tr>`
-          }
-        </tbody>
-      </table>
+    <div class="machine-list">
+      ${
+        machines.length
+          ? machines.map((m) => `
+            <div class="machine-row" data-code="${escapeHtml(m.code)}">
+              <div class="machine-row-main">
+                <span class="machine-code">${escapeHtml(m.code)}</span>
+                <span class="machine-sub">${escapeHtml(m.customer) || "—"}${m.division ? " · " + escapeHtml(m.division) : ""}</span>
+              </div>
+              <div class="machine-row-meta">
+                ${m.system ? `<span class="chip">${escapeHtml(m.system)}</span>` : ""}
+                <span class="chip">${countByMachine[m.code] || 0} batteries</span>
+                <span class="machine-open">Open →</span>
+              </div>
+            </div>
+          `).join("")
+          : `<div class="empty-state">No machines yet</div>`
+      }
     </div>
   `;
 
   document.getElementById("add-machine-btn").onclick = openNewMachineModal;
-  viewRoot.querySelectorAll(".edit-link").forEach((btn) => {
-    btn.onclick = () => openEditMachineModal(btn.dataset.code, () => renderMachines());
+  viewRoot.querySelectorAll(".machine-row").forEach((row) => {
+    row.onclick = () => navigate(`machine/${row.dataset.code}`);
+  });
+}
+
+/* ---------------- Machine Detail ---------------- */
+const MACHINE_FIELDS = [
+  { key: "customer", label: "Customer", type: "text" },
+  { key: "division", label: "Division", type: "text" },
+  { key: "contact_person", label: "Contact Person", type: "text" },
+  { key: "contact_phone", label: "Contact Phone", type: "text" },
+  { key: "system", label: "System", type: "text", ph: "Inline / Stand alone" },
+  { key: "install_date", label: "Install Date", type: "date" },
+  { key: "gauge_block_sn", label: "Gauge Block S/N (calibration)", type: "text" },
+  { key: "last_calibration_date", label: "Last Calibration Date", type: "date" },
+  { key: "next_calibration_date", label: "Next Calibration Due", type: "date" },
+  { key: "wifi_model", label: "Wi-Fi Model", type: "text" },
+  { key: "wifi_sn", label: "Wi-Fi S/N", type: "text" },
+  { key: "barcode_scanner_sn", label: "Barcode Scanner S/N", type: "text" },
+  { key: "pc_model", label: "PC Model", type: "text" },
+  { key: "pc_sn_tag", label: "PC S/N Tag", type: "text" },
+  { key: "remark", label: "Remark", type: "textarea" },
+];
+
+async function renderMachineDetail(code) {
+  viewRoot.innerHTML = `<div class="loading">Loading...</div>`;
+  let machine;
+  try {
+    machine = await api(`/api/machines/${encodeURIComponent(code)}`);
+  } catch (e) {
+    viewRoot.innerHTML = `<div class="empty-state">Machine "${escapeHtml(code)}" not found.</div>`;
+    return;
+  }
+
+  const fieldsHtml = MACHINE_FIELDS.map((f) => {
+    const val = machine[f.key] ?? "";
+    if (f.type === "textarea") {
+      return `<div class="field"><label>${f.label}</label><textarea id="mf-${f.key}">${escapeHtml(val)}</textarea></div>`;
+    }
+    return `<div class="field"><label>${f.label}</label><input id="mf-${f.key}" type="${f.type}" value="${escapeHtml(val)}" placeholder="${f.ph || ""}" /></div>`;
+  }).join("");
+
+  const endUsers = [...new Set(machine.batteries.map((b) => b.end_user).filter(Boolean))];
+
+  viewRoot.innerHTML = `
+    <div class="detail-header">
+      <button class="back-btn" id="back-btn">←</button>
+      <div class="detail-title">${escapeHtml(machine.code)}</div>
+      ${machine.system ? `<span class="badge active">${escapeHtml(machine.system)}</span>` : ""}
+    </div>
+
+    <div class="detail-grid">
+      <div class="panel">
+        <h3>Machine Info</h3>
+        <div class="form-grid form-grid-2">
+          ${fieldsHtml}
+        </div>
+        <div class="form-actions" style="margin-top:14px">
+          <button class="btn primary" id="save-machine-detail-btn">Save Changes</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Linked Batteries${endUsers.length ? " · " + escapeHtml(endUsers.join(", ")) : ""}</h3>
+        <div class="linked-batteries">
+          ${
+            machine.batteries.length
+              ? machine.batteries.map((b) => `
+                <a class="linked-battery" href="#battery/${encodeURIComponent(b.serial)}">
+                  <span class="serial">${escapeHtml(b.serial)}</span>
+                  <span class="badge ${b.status}">${STATUS_LABEL[b.status]}</span>
+                  <span class="lb-health ${healthClass(b.health_percent)}">${b.health_percent != null ? b.health_percent + "%" : "—"}</span>
+                </a>
+              `).join("")
+              : `<div class="empty-state">No batteries linked to this machine</div>`
+          }
+        </div>
+        <div class="lb-hint">To change which batteries are linked, open a battery and set its “Machine In Use”.</div>
+
+        <h3 style="margin-top:22px">Machine Notes</h3>
+        <div class="timeline" id="m-timeline">
+          ${
+            machine.logs.length
+              ? machine.logs.map(machineLogHtml).join("")
+              : `<div class="empty-state">No notes yet</div>`
+          }
+        </div>
+        <div class="add-note-row">
+          <input id="m-note-input" type="text" placeholder="Add a note e.g. calibration done / repair" />
+          <button class="btn ghost small" id="m-add-note-btn">Add</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("back-btn").onclick = () => navigate("machines");
+
+  document.getElementById("save-machine-detail-btn").onclick = async () => {
+    const payload = {};
+    for (const f of MACHINE_FIELDS) {
+      const raw = document.getElementById(`mf-${f.key}`).value;
+      payload[f.key] = raw.trim() === "" ? null : raw.trim();
+    }
+    try {
+      await api(`/api/machines/${encodeURIComponent(machine.code)}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      toast("Machine saved");
+      renderMachineDetail(machine.code);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+
+  document.getElementById("m-add-note-btn").onclick = async () => {
+    const input = document.getElementById("m-note-input");
+    if (!input.value.trim()) return;
+    try {
+      await api(`/api/machines/${encodeURIComponent(machine.code)}/logs`, {
+        method: "POST",
+        body: JSON.stringify({ description: input.value.trim() }),
+      });
+      renderMachineDetail(machine.code);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+
+  bindMachineLogActions(machine.code);
+}
+
+function machineLogHtml(log) {
+  return `
+    <div class="timeline-item" data-log-id="${log.id}">
+      <div class="timeline-dot note"></div>
+      <div class="timeline-body" data-view>
+        <div class="desc">${escapeHtml(log.description)}</div>
+        <div class="ts">${fmtDateTime(log.timestamp)}</div>
+      </div>
+      <div class="timeline-actions">
+        <button class="edit-log" title="Edit">✎</button>
+        <button class="delete delete-log" title="Delete">🗑</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindMachineLogActions(code) {
+  document.querySelectorAll("#m-timeline .timeline-item").forEach((item) => {
+    const logId = item.dataset.logId;
+    item.querySelector(".edit-log").onclick = () => {
+      const body = item.querySelector("[data-view]");
+      const currentText = body.querySelector(".desc").textContent;
+      body.innerHTML = `
+        <textarea>${escapeHtml(currentText)}</textarea>
+        <div class="timeline-edit-actions">
+          <button class="btn primary small" data-save>Save</button>
+          <button class="btn ghost small" data-cancel>Cancel</button>
+        </div>
+      `;
+      body.querySelector("[data-save]").onclick = async () => {
+        const newText = body.querySelector("textarea").value.trim();
+        if (!newText) return;
+        try {
+          await api(`/api/machines/${encodeURIComponent(code)}/logs/${logId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ description: newText }),
+          });
+          renderMachineDetail(code);
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
+      body.querySelector("[data-cancel]").onclick = () => renderMachineDetail(code);
+    };
+    item.querySelector(".delete-log").onclick = async () => {
+      if (!confirm("Delete this note?")) return;
+      try {
+        await api(`/api/machines/${encodeURIComponent(code)}/logs/${logId}`, {
+          method: "DELETE",
+        });
+        renderMachineDetail(code);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
   });
 }
 
