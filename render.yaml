@@ -15,3 +15,18 @@ services:
         value: admin
       - key: ADMIN_PASSWORD
         sync: false                   # set in the Render dashboard, never stored in the repo
+      # --- Microsoft Graph / SharePoint Excel sync ---
+      # All set in the Render dashboard so no tenant details or secrets live in
+      # this public repo. Sync stays disabled until these are present.
+      - key: GRAPH_CLIENT_ID
+        sync: false
+      - key: GRAPH_TENANT_ID
+        sync: false
+      - key: GRAPH_CLIENT_SECRET
+        sync: false
+      - key: SHAREPOINT_HOSTNAME
+        sync: false
+      - key: SHAREPOINT_SITE_PATH
+        sync: false
+      - key: EXCEL_ITEM_ID
+        sync: false
