@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import models  # noqa: F401  (imported so tables register on Base.metadata)
 from .auth import SESSION_SECRET, is_authenticated, verify_credentials
 from .database import Base, engine
-from .routers import batteries, dashboard, machines
+from .routers import batteries, dashboard, machines, sync
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -64,6 +64,7 @@ def require_auth(request: Request):
 app.include_router(batteries.router, dependencies=[Depends(require_auth)])
 app.include_router(machines.router, dependencies=[Depends(require_auth)])
 app.include_router(dashboard.router, dependencies=[Depends(require_auth)])
+app.include_router(sync.router, dependencies=[Depends(require_auth)])
 
 
 @app.get("/healthz")

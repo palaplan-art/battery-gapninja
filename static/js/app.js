@@ -96,6 +96,8 @@ function route() {
     renderMachineDetail(decodeURIComponent(hash.slice("machine/".length)));
   } else if (hash === "machines") {
     renderMachines();
+  } else if (hash === "sync") {
+    renderSync();
   } else {
     renderDashboard();
   }
@@ -835,6 +837,188 @@ function bindMachineLogActions(code) {
   });
 }
 
+/* ---------------- Excel Sync ---------------- */
+const SYNC_FIELD_LABELS = {
+  customer: "Customer",
+  division: "Division",
+  contact_person: "Contact Person",
+  contact_phone: "Contact Phone",
+  system: "System",
+  gauge_block_sn: "Gauge Block S/N",
+  wifi_model: "Wi-Fi Model",
+  wifi_sn: "Wi-Fi S/N",
+  barcode_scanner_sn: "Barcode Scanner S/N",
+  pc_model: "PC Model",
+  pc_sn_tag: "PC S/N Tag",
+  remark: "Remark",
+  install: "Installation Day",
+};
+
+function syncRowsHtml(entries, kind) {
+  return entries
+    .map((e) => `
+      <tr>
+        <td class="nowrap"><b>${escapeHtml(e.code)}</b></td>
+        <td>${escapeHtml(SYNC_FIELD_LABELS[e.field] || e.field)}</td>
+        <td class="${kind === "to_app" ? "sync-win" : ""}">${escapeHtml(e.excel) || "<em>(empty)</em>"}</td>
+        <td class="${kind === "to_excel" ? "sync-win" : ""}">${escapeHtml(e.app) || "<em>(empty)</em>"}</td>
+        ${
+          kind === "conflict"
+            ? `<td class="nowrap">
+                 <label class="pick"><input type="radio" name="c-${escapeHtml(e.code)}.${e.field}" value="excel" /> Excel</label>
+                 <label class="pick"><input type="radio" name="c-${escapeHtml(e.code)}.${e.field}" value="app" /> App</label>
+               </label></td>`
+            : ""
+        }
+      </tr>`)
+    .join("");
+}
+
+async function renderSync() {
+  viewRoot.innerHTML = `<div class="loading">Reading the workbook from SharePoint…</div>`;
+
+  let status;
+  try {
+    status = await api("/api/sync/status");
+  } catch (e) {
+    viewRoot.innerHTML = `<div class="empty-state">Sync unavailable: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (!status.configured) {
+    viewRoot.innerHTML = `
+      <div class="section-head"><h2>Excel Sync</h2></div>
+      <div class="panel"><div class="empty-state">
+        Microsoft Graph is not configured on this server.<br />
+        Set GRAPH_CLIENT_ID, GRAPH_TENANT_ID, GRAPH_CLIENT_SECRET,
+        SHAREPOINT_HOSTNAME and SHAREPOINT_SITE_PATH.
+      </div></div>`;
+    return;
+  }
+
+  let diff;
+  try {
+    diff = await api("/api/sync/preview");
+  } catch (e) {
+    viewRoot.innerHTML = `<div class="empty-state">Could not read the workbook: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  const f = status.file || {};
+  const inSync =
+    diff.to_app.length === 0 && diff.to_excel.length === 0 && diff.conflicts.length === 0;
+
+  viewRoot.innerHTML = `
+    <div class="section-head">
+      <h2>Excel Sync</h2>
+      <button class="btn ghost small" id="refresh-sync">Refresh</button>
+    </div>
+
+    <div class="panel" style="margin-bottom:18px">
+      <div class="sync-file">
+        <div><span class="lbl">Workbook</span><b>${escapeHtml(f.name)}</b></div>
+        <div><span class="lbl">Last modified</span>${fmtDateTime(f.lastModifiedDateTime)}</div>
+        <div><span class="lbl">Machines</span>Excel ${diff.excel_machine_count} · App ${diff.app_machine_count}</div>
+      </div>
+    </div>
+
+    ${
+      inSync
+        ? `<div class="panel"><div class="empty-state">✅ Everything is in sync — no differences found.</div></div>`
+        : `
+      ${diff.conflicts.length ? `
+        <div class="panel sync-block">
+          <h3 class="sync-h conflict">⚠ Conflicts — changed on both sides (${diff.conflicts.length})</h3>
+          <p class="sync-note">Pick which side wins. Anything left unpicked is skipped, not overwritten.</p>
+          <div class="table-scroll"><table class="tests-table">
+            <thead><tr><th>Machine</th><th>Field</th><th>Excel value</th><th>App value</th><th>Keep</th></tr></thead>
+            <tbody>${syncRowsHtml(diff.conflicts, "conflict")}</tbody>
+          </table></div>
+        </div>` : ""}
+
+      ${diff.to_app.length ? `
+        <div class="panel sync-block">
+          <h3 class="sync-h">Excel → App (${diff.to_app.length})</h3>
+          <div class="table-scroll"><table class="tests-table">
+            <thead><tr><th>Machine</th><th>Field</th><th>Excel value</th><th>App value</th></tr></thead>
+            <tbody>${syncRowsHtml(diff.to_app, "to_app")}</tbody>
+          </table></div>
+        </div>` : ""}
+
+      ${diff.to_excel.length ? `
+        <div class="panel sync-block">
+          <h3 class="sync-h">App → Excel (${diff.to_excel.length})</h3>
+          <p class="sync-note">These are written into the SharePoint workbook only if you tick the write option below.</p>
+          <div class="table-scroll"><table class="tests-table">
+            <thead><tr><th>Machine</th><th>Field</th><th>Excel value</th><th>App value</th></tr></thead>
+            <tbody>${syncRowsHtml(diff.to_excel, "to_excel")}</tbody>
+          </table></div>
+        </div>` : ""}
+      `
+    }
+
+    ${
+      diff.only_in_excel.length || diff.only_in_app.length
+        ? `<div class="panel sync-block">
+            <h3 class="sync-h">Not matched</h3>
+            <div class="sync-note">Only in Excel: ${diff.only_in_excel.map(escapeHtml).join(", ") || "—"}</div>
+            <div class="sync-note">Only in App: ${diff.only_in_app.map(escapeHtml).join(", ") || "—"}</div>
+          </div>`
+        : ""
+    }
+
+    ${
+      inSync
+        ? ""
+        : `<div class="panel sync-actions">
+            <label class="write-toggle">
+              <input type="checkbox" id="write-excel" />
+              <span>Also write “App → Excel” changes into the SharePoint workbook
+              <b>(a timestamped backup copy is saved first)</b></span>
+            </label>
+            <button class="btn primary" id="apply-sync">Apply Sync</button>
+          </div>`
+    }
+  `;
+
+  document.getElementById("refresh-sync").onclick = () => renderSync();
+
+  const applyBtn = document.getElementById("apply-sync");
+  if (applyBtn) {
+    applyBtn.onclick = async () => {
+      const writeExcel = document.getElementById("write-excel").checked;
+      const resolution = {};
+      viewRoot.querySelectorAll('input[type=radio]:checked').forEach((r) => {
+        resolution[r.name.slice(2)] = r.value;
+      });
+      if (writeExcel && !confirm(
+        "This will modify the shared workbook on SharePoint.\n" +
+        "A backup copy is saved first. Continue?"
+      )) return;
+
+      applyBtn.disabled = true;
+      applyBtn.textContent = "Applying…";
+      try {
+        const res = await api("/api/sync/apply", {
+          method: "POST",
+          body: JSON.stringify({
+            write_excel: writeExcel,
+            conflict_resolution: resolution,
+            backup_first: true,
+          }),
+        });
+        let msg = `Applied — Excel→App: ${res.applied_to_app}, App→Excel: ${res.applied_to_excel}`;
+        if (res.skipped_conflicts) msg += `, skipped conflicts: ${res.skipped_conflicts}`;
+        toast(msg);
+        renderSync();
+      } catch (e) {
+        toast(e.message, true);
+        applyBtn.disabled = false;
+        applyBtn.textContent = "Apply Sync";
+      }
+    };
+  }
+}
+
 /* ---------------- Modals ---------------- */
 function openModal(html, wide = false) {
   modalRoot.innerHTML = `<div class="modal-overlay" id="overlay"><div class="modal ${wide ? "wide" : ""}">${html}</div></div>`;
@@ -1036,6 +1220,7 @@ async function openEditMachineModal(code, onSaved) {
 document.getElementById("btn-new-battery").onclick = openNewBatteryModal;
 document.getElementById("btn-new-machine").onclick = openNewMachineModal;
 document.getElementById("btn-machines").onclick = () => navigate("machines");
+document.getElementById("btn-sync").onclick = () => navigate("sync");
 document.getElementById("search-btn").onclick = () => {
   navigate("");
   renderDashboard();

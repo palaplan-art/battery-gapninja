@@ -622,6 +622,49 @@ body {
 }
 .inline-link:hover { text-decoration: underline; }
 
+/* ---------- Excel sync ---------- */
+.sync-file { display: flex; flex-wrap: wrap; gap: 28px; font-size: 13.5px; }
+.sync-file .lbl {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 3px;
+}
+.sync-block { margin-bottom: 18px; }
+.sync-h {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sync-h.conflict { color: var(--amber); }
+.sync-note { font-size: 12px; color: var(--text-faint); margin: 0 0 12px; }
+.sync-win { color: var(--green); font-weight: 600; }
+.pick { font-size: 12px; margin-right: 10px; cursor: pointer; white-space: nowrap; }
+.pick input { margin-right: 3px; }
+
+.sync-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.write-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  max-width: 640px;
+}
+.write-toggle input { margin-top: 2px; flex-shrink: 0; }
+.write-toggle b { color: var(--amber); }
+
 @media (max-width: 860px) {
   .topbar { flex-wrap: wrap; }
   .search-wrap { order: 3; max-width: 100%; }

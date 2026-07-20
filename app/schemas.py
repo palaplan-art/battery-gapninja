@@ -14,6 +14,7 @@ class MachineFields(BaseModel):
     contact_phone: str | None = None
     system: str | None = None
     install_date: date | None = None
+    install_status: str | None = None
     gauge_block_sn: str | None = None
     last_calibration_date: date | None = None
     next_calibration_date: date | None = None

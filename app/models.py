@@ -43,6 +43,9 @@ class Machine(Base):
     contact_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     system: Mapped[str | None] = mapped_column(String(64), nullable=True)
     install_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The sheet's "Installation Day" column holds either a real date or a status
+    # word such as "Waiting"/"Demo"; the non-date form is kept here.
+    install_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Calibration
     gauge_block_sn: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_calibration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -54,6 +57,9 @@ class Machine(Base):
     pc_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pc_sn_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON snapshot of the values at the last successful Excel sync, used as the
+    # baseline for three-way merge conflict detection.
+    sync_baseline: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     logs: Mapped[list["MachineLog"]] = relationship(
