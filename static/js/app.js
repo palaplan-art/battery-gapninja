@@ -1,9 +1,27 @@
 const viewRoot = document.getElementById("view-root");
 const modalRoot = document.getElementById("modal-root");
 
+const FILTERS_KEY = "gn_filters_v1";
+
+function loadFilters() {
+  const defaults = { q: "", machine_code: "", status: "", end_user: "", sort: "" };
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}") };
+  } catch (e) {
+    return defaults;
+  }
+}
+
+function saveFilters() {
+  try {
+    localStorage.setItem(FILTERS_KEY, JSON.stringify(state.filters));
+  } catch (e) {}
+}
+
 let state = {
   machines: [],
-  filters: { machine_code: "", status: "", end_user: "", sort: "" },
+  allBatteries: null, // unfiltered cache for the quick-picker
+  filters: loadFilters(),
 };
 
 /* ---------------- API helper ---------------- */
@@ -81,6 +99,17 @@ function healthColor(pct) {
 
 const STATUS_LABEL = { active: "Active", maintenance: "Maintenance", retired: "Retired" };
 
+/* Calibration due status from next_calibration_date:
+   overdue (past) / due (within 60 days) / ok / none (no date set). */
+const CALIB_WARN_DAYS = 60;
+function calibInfo(m) {
+  if (!m.next_calibration_date) return { state: "none", label: "No cal. date", days: null };
+  const days = -daysAgo(m.next_calibration_date);
+  if (days < 0) return { state: "overdue", label: `Overdue ${-days}d`, days };
+  if (days <= CALIB_WARN_DAYS) return { state: "due", label: `Due in ${days}d`, days };
+  return { state: "ok", label: `Due ${fmtDate(m.next_calibration_date)}`, days };
+}
+
 /* ---------------- Routing ---------------- */
 function navigate(view) {
   location.hash = view;
@@ -103,24 +132,33 @@ function route() {
   }
 }
 
-/* ---------------- Dashboard ---------------- */
+/* ---------------- Dashboard (Batteries) ---------------- */
+function hasActiveFilters() {
+  const f = state.filters;
+  return !!(f.q || f.machine_code || f.status || f.end_user);
+}
+
 async function renderDashboard() {
   viewRoot.innerHTML = `<div class="loading">Loading...</div>`;
+  saveFilters();
 
-  const [summary, machines] = await Promise.all([
-    api("/api/dashboard/summary"),
-    api("/api/machines"),
-  ]);
-  state.machines = machines;
-
-  const q = document.getElementById("search-input")?.value || "";
   const params = new URLSearchParams();
-  if (q) params.set("q", q);
+  if (state.filters.q) params.set("q", state.filters.q);
   if (state.filters.machine_code) params.set("machine_code", state.filters.machine_code);
   if (state.filters.status) params.set("status", state.filters.status);
   if (state.filters.end_user) params.set("end_user", state.filters.end_user);
   if (state.filters.sort) params.set("sort", state.filters.sort);
-  let batteries = await api(`/api/batteries?${params.toString()}`);
+
+  // All three requests in parallel — one round-trip instead of two.
+  const [summary, machines, batteriesRaw] = await Promise.all([
+    api("/api/dashboard/summary"),
+    api("/api/machines"),
+    api(`/api/batteries?${params.toString()}`),
+  ]);
+  state.machines = machines;
+  let batteries = batteriesRaw;
+  // Reuse an unfiltered result as the quick-picker cache (no extra request).
+  if (!hasActiveFilters()) state.allBatteries = batteriesRaw;
 
   // When not filtering by a specific end-user, surface TBTS batteries first.
   // (Skipped when sorting by recency, which has its own ordering.)
@@ -134,6 +172,7 @@ async function renderDashboard() {
   }
 
   const endUsers = summary.end_users || [];
+  const pickerSource = state.allBatteries || batteries;
 
   viewRoot.innerHTML = `
     <div class="stats-row stats-4">
@@ -143,76 +182,94 @@ async function renderDashboard() {
       <div class="stat-card"><div class="num" style="color:var(--gray)">${summary.retired}</div><div class="label">Retired</div></div>
     </div>
 
-    <div class="filter-row">
-      <select id="filter-enduser">
-        <option value="">All End-Users</option>
-        ${endUsers.map((u) => `<option value="${escapeHtml(u)}" ${state.filters.end_user === u ? "selected" : ""}>${escapeHtml(u)}</option>`).join("")}
-      </select>
-      <select id="filter-machine">
-        <option value="">All Machines</option>
-        ${state.machines.map((m) => `<option value="${escapeHtml(m.code)}" ${state.filters.machine_code === m.code ? "selected" : ""}>${escapeHtml(m.code)}</option>`).join("")}
-      </select>
-      <select id="filter-status">
-        <option value="">All Status</option>
-        ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${state.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}
-      </select>
-      <select id="filter-sort">
-        <option value="" ${state.filters.sort === "" ? "selected" : ""}>Sort: Serial</option>
-        <option value="recent" ${state.filters.sort === "recent" ? "selected" : ""}>Sort: Recently updated</option>
-      </select>
+    <div class="battery-toolbar">
+      <div class="search-wrap">
+        <input id="search-input" type="text" value="${escapeHtml(state.filters.q)}" placeholder="Search battery e.g. 1, 0001 or GNB-0001" autocomplete="off" />
+        <button class="btn primary" id="search-btn">Search</button>
+        <select id="battery-picker" title="Jump to a battery">
+          <option value="">Battery ▾</option>
+          ${pickerSource.map((b) => `<option value="${escapeHtml(b.serial)}">${escapeHtml(b.serial)}${b.machine_code ? " · " + escapeHtml(b.machine_code) : ""}</option>`).join("")}
+        </select>
+      </div>
+      <div class="filter-row">
+        <select id="filter-enduser">
+          <option value="">All End-Users</option>
+          ${endUsers.map((u) => `<option value="${escapeHtml(u)}" ${state.filters.end_user === u ? "selected" : ""}>${escapeHtml(u)}</option>`).join("")}
+        </select>
+        <select id="filter-machine">
+          <option value="">All Machines</option>
+          ${state.machines.map((m) => `<option value="${escapeHtml(m.code)}" ${state.filters.machine_code === m.code ? "selected" : ""}>${escapeHtml(m.code)}</option>`).join("")}
+        </select>
+        <select id="filter-status">
+          <option value="">All Status</option>
+          ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${state.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+        <select id="filter-sort">
+          <option value="" ${state.filters.sort === "" ? "selected" : ""}>Sort: Serial</option>
+          <option value="recent" ${state.filters.sort === "recent" ? "selected" : ""}>Sort: Recently updated</option>
+        </select>
+        ${hasActiveFilters() ? `<button class="btn ghost small" id="clear-filters">Clear</button>` : ""}
+      </div>
     </div>
 
-    <div class="battery-grid">
+    <div class="machine-list">
       ${
         batteries.length
-          ? batteries.map((b) => batteryCardHtml(b)).join("")
+          ? batteries.map((b) => batteryRowHtml(b)).join("")
           : `<div class="empty-state">No batteries match the current filters.</div>`
       }
     </div>
   `;
 
-  document.getElementById("filter-enduser").onchange = (e) => {
-    state.filters.end_user = e.target.value;
+  const doSearch = () => {
+    state.filters.q = document.getElementById("search-input").value.trim();
     renderDashboard();
   };
-  document.getElementById("filter-machine").onchange = (e) => {
-    state.filters.machine_code = e.target.value;
-    renderDashboard();
+  document.getElementById("search-btn").onclick = doSearch;
+  document.getElementById("search-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doSearch();
+  });
+  document.getElementById("battery-picker").onchange = (e) => {
+    const serial = e.target.value;
+    e.target.value = "";
+    if (serial) navigate(`battery/${serial}`);
   };
-  document.getElementById("filter-status").onchange = (e) => {
-    state.filters.status = e.target.value;
-    renderDashboard();
+  const bindFilter = (id, key) => {
+    document.getElementById(id).onchange = (e) => {
+      state.filters[key] = e.target.value;
+      renderDashboard();
+    };
   };
-  document.getElementById("filter-sort").onchange = (e) => {
-    state.filters.sort = e.target.value;
-    renderDashboard();
-  };
-  viewRoot.querySelectorAll(".battery-card").forEach((card) => {
-    card.onclick = () => navigate(`battery/${card.dataset.serial}`);
+  bindFilter("filter-enduser", "end_user");
+  bindFilter("filter-machine", "machine_code");
+  bindFilter("filter-status", "status");
+  bindFilter("filter-sort", "sort");
+  const clearBtn = document.getElementById("clear-filters");
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      state.filters = { q: "", machine_code: "", status: "", end_user: "", sort: state.filters.sort };
+      renderDashboard();
+    };
+  }
+  viewRoot.querySelectorAll(".battery-row").forEach((row) => {
+    row.onclick = () => navigate(`battery/${row.dataset.serial}`);
   });
 }
 
-function batteryCardHtml(b) {
+function batteryRowHtml(b) {
   const pct = b.health_percent;
   return `
-    <div class="battery-card" data-serial="${escapeHtml(b.serial)}">
-      <div class="battery-card-head">
-        <span class="serial">${escapeHtml(b.serial)}</span>
-        <span class="badge ${b.status}">${STATUS_LABEL[b.status]}</span>
+    <div class="machine-row battery-row" data-serial="${escapeHtml(b.serial)}">
+      <div class="machine-row-main">
+        <span class="machine-code">${escapeHtml(b.serial)}</span>
+        <span class="machine-sub">${escapeHtml(b.machine_code) || "No machine"}${b.end_user ? " · " + escapeHtml(b.end_user) : ""}</span>
       </div>
-      <div class="row"><span>Machine</span><b>${escapeHtml(b.machine_code) || "—"}</b></div>
-      <div class="row"><span>End-User</span><b>${escapeHtml(b.end_user) || "—"}</b></div>
-      <div class="row"><span>Commissioned</span><b>${fmtDate(b.commission_date)}</b></div>
-      ${
-        pct !== null && pct !== undefined
-          ? `<div class="row"><span>Health</span><b class="${healthClass(pct)}">${pct}%</b></div>`
-          : ""
-      }
-      ${
-        state.filters.sort === "recent"
-          ? `<div class="row"><span>Updated</span><b>${b.updated_at ? fmtDateTime(b.updated_at) : "—"}</b></div>`
-          : ""
-      }
+      <div class="machine-row-meta">
+        ${pct !== null && pct !== undefined ? `<span class="chip ${healthClass(pct)}">${pct}%</span>` : ""}
+        ${state.filters.sort === "recent" && b.updated_at ? `<span class="chip">${fmtDateTime(b.updated_at)}</span>` : ""}
+        <span class="badge ${b.status}">${STATUS_LABEL[b.status]}</span>
+        <span class="machine-open">Open →</span>
+      </div>
     </div>
   `;
 }
@@ -640,15 +697,40 @@ async function renderMachines() {
     if (b.machine_code) countByMachine[b.machine_code] = (countByMachine[b.machine_code] || 0) + 1;
   }
 
+  const calibCounts = { overdue: 0, due: 0, ok: 0, none: 0 };
+  for (const m of machines) calibCounts[calibInfo(m).state]++;
+
   viewRoot.innerHTML = `
     <div class="section-head">
       <h2>Machines</h2>
       <button class="btn primary" id="add-machine-btn">+ Machine</button>
     </div>
+
+    <div class="stats-row stats-4">
+      <div class="stat-card ${calibCounts.overdue ? "attention" : ""}">
+        <div class="num" style="color:var(--red)">${calibCounts.overdue}</div>
+        <div class="label">Calibration Overdue</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" style="color:var(--amber)">${calibCounts.due}</div>
+        <div class="label">Due within ${CALIB_WARN_DAYS} days</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" style="color:var(--green)">${calibCounts.ok}</div>
+        <div class="label">Calibration OK</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" style="color:var(--gray)">${calibCounts.none}</div>
+        <div class="label">No Calibration Date</div>
+      </div>
+    </div>
+
     <div class="machine-list">
       ${
         machines.length
-          ? machines.map((m) => `
+          ? machines.map((m) => {
+              const cal = calibInfo(m);
+              return `
             <div class="machine-row" data-code="${escapeHtml(m.code)}">
               <div class="machine-row-main">
                 <span class="machine-code">${escapeHtml(m.code)}</span>
@@ -657,10 +739,11 @@ async function renderMachines() {
               <div class="machine-row-meta">
                 ${m.system ? `<span class="chip">${escapeHtml(m.system)}</span>` : ""}
                 <span class="chip">${countByMachine[m.code] || 0} batteries</span>
+                <span class="chip calib-${cal.state}">${cal.label}</span>
                 <span class="machine-open">Open →</span>
               </div>
-            </div>
-          `).join("")
+            </div>`;
+            }).join("")
           : `<div class="empty-state">No machines yet</div>`
       }
     </div>
@@ -717,6 +800,7 @@ async function renderMachineDetail(code) {
       <button class="back-btn" id="back-btn">←</button>
       <div class="detail-title">${escapeHtml(machine.code)}</div>
       ${machine.system ? `<span class="badge active">${escapeHtml(machine.system)}</span>` : ""}
+      ${(() => { const cal = calibInfo(machine); return `<span class="chip calib-${cal.state}">${cal.label}</span>`; })()}
     </div>
 
     <div class="detail-grid">
@@ -1240,43 +1324,11 @@ async function openEditMachineModal(code, onSaved) {
 /* ---------------- Global bindings ---------------- */
 document.getElementById("btn-new-battery").onclick = openNewBatteryModal;
 document.getElementById("btn-new-machine").onclick = openNewMachineModal;
+document.getElementById("btn-batteries").onclick = () => {
+  if (location.hash.replace(/^#/, "") === "") renderDashboard();
+  else navigate("");
+};
 document.getElementById("btn-machines").onclick = () => navigate("machines");
 document.getElementById("btn-sync").onclick = () => navigate("sync");
-
-/* Quick battery picker beside the search box — same effect as searching. */
-const batteryPicker = document.getElementById("battery-picker");
-async function loadBatteryPicker() {
-  try {
-    const all = await api("/api/batteries");
-    batteryPicker.innerHTML =
-      `<option value="">Battery ▾</option>` +
-      all
-        .map(
-          (b) =>
-            `<option value="${escapeHtml(b.serial)}">${escapeHtml(b.serial)}${
-              b.machine_code ? " · " + escapeHtml(b.machine_code) : ""
-            }</option>`
-        )
-        .join("");
-  } catch (e) {
-    /* picker is a convenience only — ignore load failures */
-  }
-}
-batteryPicker.onchange = (e) => {
-  const serial = e.target.value;
-  e.target.value = "";
-  if (serial) navigate(`battery/${serial}`);
-};
-loadBatteryPicker();
-document.getElementById("search-btn").onclick = () => {
-  navigate("");
-  renderDashboard();
-};
-document.getElementById("search-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    navigate("");
-    renderDashboard();
-  }
-});
 
 route();

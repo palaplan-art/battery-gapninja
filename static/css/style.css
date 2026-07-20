@@ -121,11 +121,29 @@ body {
 .brand-text strong { font-size: 15px; letter-spacing: 0.5px; }
 .brand-text span { font-size: 12px; color: var(--text-dim); }
 
+.topbar-nav { display: flex; gap: 6px; flex: 1; }
+.nav-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nav-btn:hover { color: var(--text); background: var(--card); }
+
+.battery-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
 .search-wrap {
-  flex: 1;
   display: flex;
   gap: 8px;
-  max-width: 520px;
+  max-width: 640px;
 }
 .search-wrap input {
   flex: 1;
@@ -593,6 +611,31 @@ body {
   white-space: nowrap;
 }
 .machine-open { font-size: 13px; color: var(--accent); font-weight: 600; }
+
+/* Calibration status chips */
+.chip.calib-overdue {
+  color: var(--red);
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.12);
+  font-weight: 700;
+}
+.chip.calib-due {
+  color: var(--amber);
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.12);
+  font-weight: 700;
+}
+.chip.calib-ok {
+  color: var(--green);
+  border-color: rgba(52, 211, 153, 0.45);
+  background: rgba(52, 211, 153, 0.1);
+}
+.chip.calib-none { color: var(--text-faint); }
+
+/* Health-coloured chips reuse the health classes */
+.chip.health-good { color: var(--green); font-weight: 700; }
+.chip.health-mid { color: var(--amber); font-weight: 700; }
+.chip.health-low { color: var(--red); font-weight: 700; }
 
 /* ---------- Machine detail: linked batteries ---------- */
 .linked-batteries { display: flex; flex-direction: column; gap: 8px; }

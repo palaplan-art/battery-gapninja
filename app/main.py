@@ -38,7 +38,7 @@ def _auto_migrate() -> None:
 
 _auto_migrate()
 
-app = FastAPI(title="Battery History Log")
+app = FastAPI(title="GAPNINJA History Log")
 
 # Session cookie: signed with SESSION_SECRET. https_only can be turned on in
 # production (HTTPS) via SESSION_HTTPS_ONLY=1; kept off by default so local

@@ -1,15 +1,34 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import crud, schemas
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..services import excel_sync, graph
 
 logger = logging.getLogger("battery.machines")
 
 router = APIRouter(prefix="/api/machines", tags=["machines"])
+
+
+def _push_machine_to_excel(code: str) -> None:
+    """Background task: mirror a machine's fields into the SharePoint workbook.
+
+    Runs after the HTTP response is sent so saving a machine stays instant even
+    though the Graph round-trip takes a few seconds. Failures only log — the
+    Sync page can always reconcile later."""
+    db = SessionLocal()
+    try:
+        machine = crud.get_machine(db, code)
+        if machine:
+            excel_sync.push_machine(db, machine)
+    except (graph.GraphError, excel_sync.LayoutError) as e:
+        logger.warning("Excel push skipped for %s: %s", code, e)
+    except Exception:
+        logger.exception("Excel push failed for %s", code)
+    finally:
+        db.close()
 
 
 @router.get("", response_model=list[schemas.MachineOut])
@@ -40,6 +59,7 @@ def get_machine(code: str, db: Session = Depends(get_db)):
 def update_machine(
     code: str,
     payload: schemas.MachineUpdate,
+    background_tasks: BackgroundTasks,
     push_to_excel: bool = True,
     db: Session = Depends(get_db),
 ):
@@ -48,13 +68,10 @@ def update_machine(
         raise HTTPException(404, "Machine not found")
     machine = crud.update_machine(db, machine, payload)
 
-    # Mirror the edit into the SharePoint workbook. Never let a Graph problem
-    # fail the save — the Sync page can always reconcile later.
+    # Mirror the edit into the SharePoint workbook after the response is sent,
+    # so the save itself returns immediately.
     if push_to_excel and graph.is_configured():
-        try:
-            excel_sync.push_machine(db, machine)
-        except (graph.GraphError, excel_sync.LayoutError) as e:
-            logger.warning("Excel push skipped for %s: %s", machine.code, e)
+        background_tasks.add_task(_push_machine_to_excel, machine.code)
     return machine
 
 

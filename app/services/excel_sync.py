@@ -367,6 +367,7 @@ def push_machine(db: Session, machine: models.Machine) -> dict:
     ex = excel[code]
     app_vals = _app_values(machine, fields)
     base = _baseline(machine)
+    never_synced = not base
 
     written, conflicts = 0, []
     for field in fields:
@@ -374,6 +375,11 @@ def push_machine(db: Session, machine: models.Machine) -> dict:
         ex_val = ex.get(field, "")
         base_val = base.get(field, None)
         if app_val == ex_val:
+            continue
+        if never_synced and ex_val != "":
+            # No baseline yet: we cannot tell which side is newer, so never
+            # overwrite a non-empty Excel cell — surface it on the Sync page.
+            conflicts.append(field)
             continue
         if base_val is not None and ex_val != base_val:
             conflicts.append(field)  # Excel changed too — leave it for manual review

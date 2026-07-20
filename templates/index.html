@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GAPNINJA Battery Log</title>
+<title>GAPNINJA History Log</title>
 <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
@@ -14,21 +14,17 @@
       <span class="brand-mark">GN</span>
       <div class="brand-text">
         <strong>GAPNINJA</strong>
-        <span>Battery History Log</span>
+        <span>History Log</span>
       </div>
     </div>
 
-    <div class="search-wrap">
-      <input id="search-input" type="text" placeholder="Search battery e.g. 1, 0001 or GNB-0001" autocomplete="off" />
-      <button id="search-btn">Search</button>
-      <select id="battery-picker" title="Jump to a battery">
-        <option value="">Battery ▾</option>
-      </select>
-    </div>
+    <nav class="topbar-nav">
+      <button class="nav-btn" id="btn-batteries">Batteries</button>
+      <button class="nav-btn" id="btn-machines">Machines</button>
+      <button class="nav-btn" id="btn-sync">Excel Sync</button>
+    </nav>
 
     <div class="topbar-actions">
-      <button class="btn ghost" id="btn-machines">Machines</button>
-      <button class="btn ghost" id="btn-sync">Excel Sync</button>
       <button class="btn ghost" id="btn-new-machine">+ Machine</button>
       <button class="btn primary" id="btn-new-battery">+ Battery</button>
       <a class="btn ghost" href="/logout" id="btn-logout" title="Sign out">Sign out</a>
