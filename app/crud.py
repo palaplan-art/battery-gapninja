@@ -1,5 +1,4 @@
 import re
-from datetime import datetime, timedelta
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -8,7 +7,6 @@ from . import models, schemas
 
 SERIAL_PREFIX = "GNB-"
 SERIAL_DIGITS = 4
-ATTENTION_DAYS = 180  # flag batteries with no cell replacement logged in this many days
 
 
 def normalize_query(q: str) -> str:
@@ -253,6 +251,48 @@ def delete_log(db: Session, log: models.BatteryLog) -> None:
     db.commit()
 
 
+# ---------------- Battery test records ----------------
+def add_test(
+    db: Session, battery: models.Battery, payload: schemas.BatteryTestCreate
+) -> models.BatteryTest:
+    test = models.BatteryTest(battery_id=battery.id, **payload.model_dump())
+    db.add(test)
+    # Keep the battery's headline capacity/health in sync with the latest reading.
+    if payload.capacity_after_charge_mah:
+        battery.last_capacity_mah = payload.capacity_after_charge_mah
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+def get_test(db: Session, battery: models.Battery, test_id: int) -> models.BatteryTest | None:
+    return (
+        db.query(models.BatteryTest)
+        .filter(
+            models.BatteryTest.id == test_id,
+            models.BatteryTest.battery_id == battery.id,
+        )
+        .first()
+    )
+
+
+def update_test(
+    db: Session, test: models.BatteryTest, payload: schemas.BatteryTestUpdate
+) -> models.BatteryTest:
+    for field, value in payload.model_dump().items():
+        setattr(test, field, value)
+    if payload.capacity_after_charge_mah:
+        test.battery.last_capacity_mah = payload.capacity_after_charge_mah
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+def delete_test(db: Session, test: models.BatteryTest) -> None:
+    db.delete(test)
+    db.commit()
+
+
 def list_machines(db: Session) -> list[models.Machine]:
     return db.query(models.Machine).order_by(models.Machine.code.asc()).all()
 
@@ -288,6 +328,23 @@ def update_machine(
     return machine
 
 
+PRIORITY_END_USER = "TBTS"
+
+
+def list_end_users(db: Session) -> list[str]:
+    """Distinct non-empty end-users, with TBTS-first then alphabetical."""
+    rows = (
+        db.query(models.Battery.end_user)
+        .filter(models.Battery.end_user.isnot(None), models.Battery.end_user != "")
+        .distinct()
+        .all()
+    )
+    values = sorted({r[0].strip() for r in rows if r[0] and r[0].strip()})
+    priority = [v for v in values if v.upper().startswith(PRIORITY_END_USER)]
+    others = [v for v in values if not v.upper().startswith(PRIORITY_END_USER)]
+    return priority + others
+
+
 def dashboard_summary(db: Session) -> dict:
     batteries = db.query(models.Battery).all()
     total = len(batteries)
@@ -295,19 +352,10 @@ def dashboard_summary(db: Session) -> dict:
     maintenance = sum(1 for b in batteries if b.status == models.BatteryStatus.maintenance)
     retired = sum(1 for b in batteries if b.status == models.BatteryStatus.retired)
 
-    cutoff = datetime.now() - timedelta(days=ATTENTION_DAYS)
-    needs_attention = []
-    for b in batteries:
-        if b.status == models.BatteryStatus.retired:
-            continue
-        reference_date = b.last_cell_replacement_date or b.commission_date
-        if reference_date is None or reference_date < cutoff.date():
-            needs_attention.append(b)
-
     return {
         "total": total,
         "active": active,
         "maintenance": maintenance,
         "retired": retired,
-        "needs_attention": needs_attention,
+        "end_users": list_end_users(db),
     }

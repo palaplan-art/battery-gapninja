@@ -68,6 +68,35 @@ class Battery(Base):
         cascade="all, delete-orphan",
         order_by="desc(BatteryLog.timestamp)",
     )
+    tests: Mapped[list["BatteryTest"]] = relationship(
+        "BatteryTest",
+        back_populates="battery",
+        cascade="all, delete-orphan",
+        order_by="desc(BatteryTest.test_date), desc(BatteryTest.id)",
+    )
+
+
+class BatteryTest(Base):
+    __tablename__ = "battery_tests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    battery_id: Mapped[int] = mapped_column(ForeignKey("batteries.id"))
+    test_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Time/duration fields are stored as free text so any format the technician
+    # keys in (clock time HH:MM or a duration like "2:37 hr") is preserved.
+    charge_full_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    capacity_after_charge_mah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_bar_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    second_bar_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    alert_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    shutdown_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    total_runtime: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    run_to_zero_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    battery: Mapped["Battery"] = relationship("Battery", back_populates="tests")
 
 
 class BatteryLog(Base):

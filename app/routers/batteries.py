@@ -89,3 +89,49 @@ def delete_log(serial: str, log_id: int, db: Session = Depends(get_db)):
     if not log:
         raise HTTPException(404, "Log entry not found")
     crud.delete_log(db, log)
+
+
+# ---------------- Test records ----------------
+@router.get("/{serial}/tests", response_model=list[schemas.BatteryTestOut])
+def get_tests(serial: str, db: Session = Depends(get_db)):
+    battery = crud.get_battery_by_serial(db, serial.strip().upper())
+    if not battery:
+        raise HTTPException(404, "Battery not found")
+    return battery.tests
+
+
+@router.post("/{serial}/tests", response_model=schemas.BatteryTestOut, status_code=201)
+def add_test(
+    serial: str, payload: schemas.BatteryTestCreate, db: Session = Depends(get_db)
+):
+    battery = crud.get_battery_by_serial(db, serial.strip().upper())
+    if not battery:
+        raise HTTPException(404, "Battery not found")
+    return crud.add_test(db, battery, payload)
+
+
+@router.patch("/{serial}/tests/{test_id}", response_model=schemas.BatteryTestOut)
+def update_test(
+    serial: str,
+    test_id: int,
+    payload: schemas.BatteryTestUpdate,
+    db: Session = Depends(get_db),
+):
+    battery = crud.get_battery_by_serial(db, serial.strip().upper())
+    if not battery:
+        raise HTTPException(404, "Battery not found")
+    test = crud.get_test(db, battery, test_id)
+    if not test:
+        raise HTTPException(404, "Test record not found")
+    return crud.update_test(db, test, payload)
+
+
+@router.delete("/{serial}/tests/{test_id}", status_code=204)
+def delete_test(serial: str, test_id: int, db: Session = Depends(get_db)):
+    battery = crud.get_battery_by_serial(db, serial.strip().upper())
+    if not battery:
+        raise HTTPException(404, "Battery not found")
+    test = crud.get_test(db, battery, test_id)
+    if not test:
+        raise HTTPException(404, "Test record not found")
+    crud.delete_test(db, test)

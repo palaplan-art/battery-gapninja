@@ -57,6 +57,35 @@ class BatteryUpdate(BaseModel):
     notes: str | None = None
 
 
+class BatteryTestBase(BaseModel):
+    test_date: date | None = None
+    charge_full_time: str | None = None
+    capacity_after_charge_mah: int | None = None
+    start_time: str | None = None
+    first_bar_time: str | None = None
+    second_bar_time: str | None = None
+    alert_time: str | None = None
+    shutdown_time: str | None = None
+    total_runtime: str | None = None
+    run_to_zero_time: str | None = None
+    remark: str | None = None
+
+
+class BatteryTestCreate(BatteryTestBase):
+    pass
+
+
+class BatteryTestUpdate(BatteryTestBase):
+    pass
+
+
+class BatteryTestOut(BatteryTestBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+
+
 class LogCreate(BaseModel):
     description: str
 
@@ -101,6 +130,7 @@ class BatteryOut(BaseModel):
 
 class BatteryDetailOut(BatteryOut):
     logs: list[BatteryLogOut] = []
+    tests: list[BatteryTestOut] = []
 
 
 class DashboardSummary(BaseModel):
@@ -108,4 +138,4 @@ class DashboardSummary(BaseModel):
     active: int
     maintenance: int
     retired: int
-    needs_attention: list[BatteryOut]
+    end_users: list[str] = []

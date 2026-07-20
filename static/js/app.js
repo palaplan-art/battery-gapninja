@@ -3,7 +3,7 @@ const modalRoot = document.getElementById("modal-root");
 
 let state = {
   machines: [],
-  filters: { machine_code: "", status: "" },
+  filters: { machine_code: "", status: "", end_user: "" },
 };
 
 /* ---------------- API helper ---------------- */
@@ -113,20 +113,34 @@ async function renderDashboard() {
   if (q) params.set("q", q);
   if (state.filters.machine_code) params.set("machine_code", state.filters.machine_code);
   if (state.filters.status) params.set("status", state.filters.status);
-  const batteries = await api(`/api/batteries?${params.toString()}`);
+  if (state.filters.end_user) params.set("end_user", state.filters.end_user);
+  let batteries = await api(`/api/batteries?${params.toString()}`);
 
-  const attentionSerials = new Set(summary.needs_attention.map((b) => b.serial));
+  // When not filtering by a specific end-user, surface TBTS batteries first.
+  if (!state.filters.end_user) {
+    batteries = [...batteries].sort((a, b) => {
+      const at = (a.end_user || "").toUpperCase().startsWith("TBTS") ? 0 : 1;
+      const bt = (b.end_user || "").toUpperCase().startsWith("TBTS") ? 0 : 1;
+      if (at !== bt) return at - bt;
+      return a.serial.localeCompare(b.serial);
+    });
+  }
+
+  const endUsers = summary.end_users || [];
 
   viewRoot.innerHTML = `
-    <div class="stats-row">
+    <div class="stats-row stats-4">
       <div class="stat-card"><div class="num">${summary.total}</div><div class="label">Total Batteries</div></div>
       <div class="stat-card"><div class="num" style="color:var(--green)">${summary.active}</div><div class="label">Active</div></div>
       <div class="stat-card"><div class="num" style="color:var(--amber)">${summary.maintenance}</div><div class="label">Maintenance</div></div>
       <div class="stat-card"><div class="num" style="color:var(--gray)">${summary.retired}</div><div class="label">Retired</div></div>
-      <div class="stat-card attention"><div class="num">${summary.needs_attention.length}</div><div class="label">Needs Attention (no cell change &gt; 180 days)</div></div>
     </div>
 
     <div class="filter-row">
+      <select id="filter-enduser">
+        <option value="">All End-Users</option>
+        ${endUsers.map((u) => `<option value="${escapeHtml(u)}" ${state.filters.end_user === u ? "selected" : ""}>${escapeHtml(u)}</option>`).join("")}
+      </select>
       <select id="filter-machine">
         <option value="">All Machines</option>
         ${state.machines.map((m) => `<option value="${escapeHtml(m.code)}" ${state.filters.machine_code === m.code ? "selected" : ""}>${escapeHtml(m.code)}</option>`).join("")}
@@ -140,12 +154,16 @@ async function renderDashboard() {
     <div class="battery-grid">
       ${
         batteries.length
-          ? batteries.map((b) => batteryCardHtml(b, attentionSerials.has(b.serial))).join("")
+          ? batteries.map((b) => batteryCardHtml(b)).join("")
           : `<div class="empty-state">No batteries match the current filters.</div>`
       }
     </div>
   `;
 
+  document.getElementById("filter-enduser").onchange = (e) => {
+    state.filters.end_user = e.target.value;
+    renderDashboard();
+  };
   document.getElementById("filter-machine").onchange = (e) => {
     state.filters.machine_code = e.target.value;
     renderDashboard();
@@ -159,10 +177,10 @@ async function renderDashboard() {
   });
 }
 
-function batteryCardHtml(b, warn) {
+function batteryCardHtml(b) {
   const pct = b.health_percent;
   return `
-    <div class="battery-card ${warn ? "warn" : ""}" data-serial="${escapeHtml(b.serial)}">
+    <div class="battery-card" data-serial="${escapeHtml(b.serial)}">
       <div class="battery-card-head">
         <span class="serial">${escapeHtml(b.serial)}</span>
         <span class="badge ${b.status}">${STATUS_LABEL[b.status]}</span>
@@ -170,13 +188,11 @@ function batteryCardHtml(b, warn) {
       <div class="row"><span>Machine</span><b>${escapeHtml(b.machine_code) || "—"}</b></div>
       <div class="row"><span>End-User</span><b>${escapeHtml(b.end_user) || "—"}</b></div>
       <div class="row"><span>Commissioned</span><b>${fmtDate(b.commission_date)}</b></div>
-      <div class="row"><span>Last Cell Change</span><b>${b.last_cell_replacement_date ? fmtDate(b.last_cell_replacement_date) : "Never"}</b></div>
       ${
         pct !== null && pct !== undefined
           ? `<div class="row"><span>Health</span><b class="${healthClass(pct)}">${pct}%</b></div>`
           : ""
       }
-      ${warn ? `<div style="margin-top:10px"><span class="badge attn">Needs Attention</span></div>` : ""}
     </div>
   `;
 }
@@ -196,8 +212,6 @@ async function renderDetail(serial) {
   }
   state.machines = machines;
 
-  const cellDaysAgo = daysAgo(battery.last_cell_replacement_date);
-  const cellWarn = cellDaysAgo === null || cellDaysAgo > 180;
   const pct = battery.health_percent;
 
   viewRoot.innerHTML = `
@@ -214,7 +228,7 @@ async function renderDetail(serial) {
         <div class="label">Commissioned</div>
         <div class="value">${fmtDate(battery.commission_date)}</div>
       </div>
-      <div class="date-card ${cellWarn ? "warn" : ""}">
+      <div class="date-card">
         <div class="label">Last Cell Change</div>
         <div class="value">${battery.last_cell_replacement_date ? fmtDate(battery.last_cell_replacement_date) : "Never"}</div>
       </div>
@@ -292,6 +306,40 @@ async function renderDetail(serial) {
         </div>
       </div>
     </div>
+
+    <div class="panel test-panel">
+      <div class="section-head">
+        <h3>Test Records</h3>
+        <button class="btn primary small" id="add-test-btn">+ Add Test Result</button>
+      </div>
+      <div class="table-scroll">
+        <table class="tests-table">
+          <thead>
+            <tr>
+              <th>Test Date</th>
+              <th>Full Charge</th>
+              <th>Capacity (mAh)</th>
+              <th>Start</th>
+              <th>1st Bar</th>
+              <th>2nd Bar</th>
+              <th>Alert</th>
+              <th>Shutdown</th>
+              <th>Total Runtime</th>
+              <th>Run to 0 mAh</th>
+              <th>Remark</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              battery.tests.length
+                ? battery.tests.map(testRowHtml).join("")
+                : `<tr><td colspan="12"><div class="empty-state">No test records yet</div></td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
   `;
 
   document.getElementById("back-btn").onclick = () => navigate("");
@@ -343,6 +391,117 @@ async function renderDetail(serial) {
   };
 
   bindTimelineActions(battery.serial);
+
+  document.getElementById("add-test-btn").onclick = () =>
+    openTestModal(battery.serial, null);
+  viewRoot.querySelectorAll(".tests-table [data-edit-test]").forEach((btn) => {
+    const test = battery.tests.find((t) => String(t.id) === btn.dataset.editTest);
+    btn.onclick = () => openTestModal(battery.serial, test);
+  });
+  viewRoot.querySelectorAll(".tests-table [data-del-test]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm("Delete this test record?")) return;
+      try {
+        await api(
+          `/api/batteries/${encodeURIComponent(battery.serial)}/tests/${btn.dataset.delTest}`,
+          { method: "DELETE" }
+        );
+        renderDetail(battery.serial);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  });
+}
+
+function testCell(v) {
+  return `<td>${escapeHtml(v) || "—"}</td>`;
+}
+
+function testRowHtml(t) {
+  return `
+    <tr>
+      <td class="nowrap"><b>${t.test_date ? fmtDate(t.test_date) : "—"}</b></td>
+      ${testCell(t.charge_full_time)}
+      ${testCell(t.capacity_after_charge_mah)}
+      ${testCell(t.start_time)}
+      ${testCell(t.first_bar_time)}
+      ${testCell(t.second_bar_time)}
+      ${testCell(t.alert_time)}
+      ${testCell(t.shutdown_time)}
+      ${testCell(t.total_runtime)}
+      ${testCell(t.run_to_zero_time)}
+      ${testCell(t.remark)}
+      <td class="nowrap">
+        <button class="edit-link" data-edit-test="${t.id}">Edit</button>
+        <button class="edit-link danger-link" data-del-test="${t.id}">Delete</button>
+      </td>
+    </tr>
+  `;
+}
+
+const TEST_FIELDS = [
+  { key: "test_date", label: "Test Date", type: "date" },
+  { key: "charge_full_time", label: "Full Charge Time", type: "text", ph: "e.g. 2:00 hr" },
+  { key: "capacity_after_charge_mah", label: "Capacity After Charge (mAh)", type: "number" },
+  { key: "start_time", label: "Test Start Time", type: "text", ph: "e.g. 09:30" },
+  { key: "first_bar_time", label: "1st Bar Empty", type: "text", ph: "time" },
+  { key: "second_bar_time", label: "2nd Bar Empty", type: "text", ph: "time" },
+  { key: "alert_time", label: "Low Battery Alert", type: "text", ph: "time" },
+  { key: "shutdown_time", label: "Shutdown / Empty", type: "text", ph: "time" },
+  { key: "total_runtime", label: "Total Runtime", type: "text", ph: "e.g. 2:37 hr" },
+  { key: "run_to_zero_time", label: "Run to 0 mAh (duration)", type: "text", ph: "e.g. 2:25 hr" },
+  { key: "remark", label: "Remark", type: "textarea" },
+];
+
+function openTestModal(serial, test) {
+  const editing = !!test;
+  const t = test || {};
+  const fieldsHtml = TEST_FIELDS.map((f) => {
+    const val = t[f.key] ?? "";
+    if (f.type === "textarea") {
+      return `<div class="field"><label>${f.label}</label><textarea id="t-${f.key}" placeholder="${f.ph || ""}">${escapeHtml(val)}</textarea></div>`;
+    }
+    return `<div class="field"><label>${f.label}</label><input id="t-${f.key}" type="${f.type}" value="${escapeHtml(val)}" placeholder="${f.ph || ""}" ${f.type === "number" ? 'min="0" max="6000"' : ""} /></div>`;
+  }).join("");
+
+  openModal(`
+    <h2>${editing ? "Edit" : "Add"} Test Result — ${escapeHtml(serial)}</h2>
+    <div class="form-grid form-grid-2">
+      ${fieldsHtml}
+    </div>
+    <div class="form-actions">
+      <button class="btn ghost" id="cancel-btn">Cancel</button>
+      <button class="btn primary" id="save-test-btn">${editing ? "Save" : "Add"}</button>
+    </div>
+  `, true);
+
+  document.getElementById("cancel-btn").onclick = closeModal;
+  document.getElementById("save-test-btn").onclick = async () => {
+    const payload = {};
+    for (const f of TEST_FIELDS) {
+      const raw = document.getElementById(`t-${f.key}`).value;
+      if (f.type === "number") {
+        payload[f.key] = raw === "" ? null : parseInt(raw, 10);
+      } else {
+        payload[f.key] = raw.trim() === "" ? null : raw.trim();
+      }
+    }
+    try {
+      const url = editing
+        ? `/api/batteries/${encodeURIComponent(serial)}/tests/${test.id}`
+        : `/api/batteries/${encodeURIComponent(serial)}/tests`;
+      await api(url, {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+      closeModal();
+      toast(editing ? "Test record updated" : "Test record added");
+      renderDetail(serial);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
 }
 
 function logItemHtml(log) {
