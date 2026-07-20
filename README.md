@@ -60,16 +60,27 @@ static/          css/js
 templates/       index.html
 ```
 
-## Deploying to Render
+## Deploying to Render (free tier + Neon Postgres)
 
-This repo includes a `Dockerfile` and a `render.yaml` blueprint, so deployment is largely one click once the repo is on GitHub and connected to Render:
+Render's free web instances have no persistent disk, so the database lives in a
+free external Postgres from [Neon](https://neon.tech) (persistent, non-expiring
+free tier). The app runs on SQLAlchemy and auto-detects Postgres via `DATABASE_URL`.
 
-1. Push this project to a GitHub repository.
-2. In the Render dashboard: **New +** → **Blueprint**, then select the GitHub repo. Render reads `render.yaml` and provisions the web service automatically.
-3. During blueprint setup, Render prompts for the `ADMIN_PASSWORD` value (it is marked `sync: false`, so it is entered in the dashboard and never stored in this repo). Set it to your desired admin password.
-4. `render.yaml` requests the **Starter** plan with a 1 GB persistent disk mounted at `/var/data`, and points `DATABASE_URL` at a SQLite file on that disk — this is what keeps `battery_log.db` from being wiped on every redeploy (Render's free tier has no persistent disk, so the database would reset on each deploy there).
-5. Once deployed, Render gives an HTTPS URL (e.g. `https://gapninja-battery-log.onrender.com`) reachable from anywhere. Sign in with `admin` / the password you set.
+1. **Create a free Neon database:** sign up at neon.tech → create a project → copy the
+   **connection string** (looks like `postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require`).
+2. **Deploy on Render:** **New +** → **Blueprint** → select this GitHub repo. Render reads
+   `render.yaml` (free plan, no disk) and prompts for the two `sync: false` values:
+   - `DATABASE_URL` → paste the Neon connection string
+   - `ADMIN_PASSWORD` → your chosen admin password
+3. Render builds the Docker image and deploys. On first boot the app creates its tables in Neon.
+4. Open the HTTPS URL (e.g. `https://gapninja-battery-log.onrender.com`) and sign in with
+   `admin` / your password.
 
-The deployed database starts empty. Populate it either through the UI, or by running the bundled import script against the live URL (it logs in first, then posts the data).
+> Free Render instances sleep after ~15 min of inactivity; the first request afterwards
+> takes ~30–60s to wake. Data is safe in Neon regardless of sleeps or redeploys.
 
-If higher durability than a single-disk SQLite file is wanted later, swap `DATABASE_URL` to a Render-managed Postgres connection string — the app already runs on SQLAlchemy, so no code changes are needed beyond adding a Postgres driver (`psycopg2-binary`) to `requirements.txt`.
+The deployed database starts empty. Populate it through the UI, or run the bundled import
+script against the live URL (it logs in first, then posts the data over the API).
+
+To run always-on with no cold starts instead, switch `render.yaml` to `plan: starter` and add
+a `disk:` block with a SQLite `DATABASE_URL` — that is a paid Render plan (~$7/mo).

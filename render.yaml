@@ -2,20 +2,16 @@ services:
   - type: web
     name: gapninja-battery-log
     runtime: docker
-    plan: starter
+    plan: free                       # free web instance (no persistent disk)
     dockerfilePath: ./Dockerfile
     envVars:
       - key: DATABASE_URL
-        value: sqlite:////var/data/battery_log.db
+        sync: false                   # paste your Neon Postgres connection string here (kept out of the repo)
       - key: SESSION_SECRET
-        generateValue: true          # Render auto-generates a strong random value
+        generateValue: true           # Render auto-generates a strong random value
       - key: SESSION_HTTPS_ONLY
         value: "1"                    # Render serves over HTTPS
       - key: ADMIN_USERNAME
         value: admin
       - key: ADMIN_PASSWORD
         sync: false                   # set in the Render dashboard, never stored in the repo
-    disk:
-      name: battery-log-data
-      mountPath: /var/data
-      sizeGB: 1
