@@ -3,7 +3,7 @@ const modalRoot = document.getElementById("modal-root");
 
 let state = {
   machines: [],
-  filters: { machine_code: "", status: "", end_user: "" },
+  filters: { machine_code: "", status: "", end_user: "", sort: "" },
 };
 
 /* ---------------- API helper ---------------- */
@@ -119,10 +119,12 @@ async function renderDashboard() {
   if (state.filters.machine_code) params.set("machine_code", state.filters.machine_code);
   if (state.filters.status) params.set("status", state.filters.status);
   if (state.filters.end_user) params.set("end_user", state.filters.end_user);
+  if (state.filters.sort) params.set("sort", state.filters.sort);
   let batteries = await api(`/api/batteries?${params.toString()}`);
 
   // When not filtering by a specific end-user, surface TBTS batteries first.
-  if (!state.filters.end_user) {
+  // (Skipped when sorting by recency, which has its own ordering.)
+  if (!state.filters.end_user && state.filters.sort !== "recent") {
     batteries = [...batteries].sort((a, b) => {
       const at = (a.end_user || "").toUpperCase().startsWith("TBTS") ? 0 : 1;
       const bt = (b.end_user || "").toUpperCase().startsWith("TBTS") ? 0 : 1;
@@ -154,6 +156,10 @@ async function renderDashboard() {
         <option value="">All Status</option>
         ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${state.filters.status === k ? "selected" : ""}>${v}</option>`).join("")}
       </select>
+      <select id="filter-sort">
+        <option value="" ${state.filters.sort === "" ? "selected" : ""}>Sort: Serial</option>
+        <option value="recent" ${state.filters.sort === "recent" ? "selected" : ""}>Sort: Recently updated</option>
+      </select>
     </div>
 
     <div class="battery-grid">
@@ -177,6 +183,10 @@ async function renderDashboard() {
     state.filters.status = e.target.value;
     renderDashboard();
   };
+  document.getElementById("filter-sort").onchange = (e) => {
+    state.filters.sort = e.target.value;
+    renderDashboard();
+  };
   viewRoot.querySelectorAll(".battery-card").forEach((card) => {
     card.onclick = () => navigate(`battery/${card.dataset.serial}`);
   });
@@ -196,6 +206,11 @@ function batteryCardHtml(b) {
       ${
         pct !== null && pct !== undefined
           ? `<div class="row"><span>Health</span><b class="${healthClass(pct)}">${pct}%</b></div>`
+          : ""
+      }
+      ${
+        state.filters.sort === "recent"
+          ? `<div class="row"><span>Updated</span><b>${b.updated_at ? fmtDateTime(b.updated_at) : "—"}</b></div>`
           : ""
       }
     </div>
@@ -256,12 +271,17 @@ async function renderDetail(serial) {
         <div class="form-grid">
           <div class="field-row">
             <div class="field">
-              <label>Machine In Use ${battery.machine_code ? `<a class="inline-link" href="#machine/${encodeURIComponent(battery.machine_code)}">open ${escapeHtml(battery.machine_code)} →</a>` : ""}</label>
+              <label>Machine In Use</label>
               <select id="f-machine">
                 <option value="">— Unassigned —</option>
                 ${state.machines.map((m) => `<option value="${escapeHtml(m.code)}" ${battery.machine_code === m.code ? "selected" : ""}>${escapeHtml(m.code)}${m.customer ? " — " + escapeHtml(m.customer) : ""}</option>`).join("")}
               </select>
             </div>
+            ${
+              battery.machine_code
+                ? `<a class="btn ghost small open-machine-btn" href="#machine/${encodeURIComponent(battery.machine_code)}" title="Open machine ${escapeHtml(battery.machine_code)}">Open ${escapeHtml(battery.machine_code)} →</a>`
+                : ""
+            }
             <button class="icon-btn" id="edit-machine-btn" title="Edit this machine's info">✎</button>
           </div>
           <div class="field">
@@ -664,6 +684,7 @@ const MACHINE_FIELDS = [
   { key: "last_calibration_date", label: "Last Calibration Date", type: "date" },
   { key: "next_calibration_date", label: "Next Calibration Due", type: "date" },
   { key: "wifi_model", label: "Wi-Fi Model", type: "text" },
+  { key: "wifi_ip", label: "Wi-Fi IP", type: "text" },
   { key: "wifi_sn", label: "Wi-Fi S/N", type: "text" },
   { key: "barcode_scanner_sn", label: "Barcode Scanner S/N", type: "text" },
   { key: "pc_model", label: "PC Model", type: "text" },
@@ -1221,6 +1242,32 @@ document.getElementById("btn-new-battery").onclick = openNewBatteryModal;
 document.getElementById("btn-new-machine").onclick = openNewMachineModal;
 document.getElementById("btn-machines").onclick = () => navigate("machines");
 document.getElementById("btn-sync").onclick = () => navigate("sync");
+
+/* Quick battery picker beside the search box — same effect as searching. */
+const batteryPicker = document.getElementById("battery-picker");
+async function loadBatteryPicker() {
+  try {
+    const all = await api("/api/batteries");
+    batteryPicker.innerHTML =
+      `<option value="">Battery ▾</option>` +
+      all
+        .map(
+          (b) =>
+            `<option value="${escapeHtml(b.serial)}">${escapeHtml(b.serial)}${
+              b.machine_code ? " · " + escapeHtml(b.machine_code) : ""
+            }</option>`
+        )
+        .join("");
+  } catch (e) {
+    /* picker is a convenience only — ignore load failures */
+  }
+}
+batteryPicker.onchange = (e) => {
+  const serial = e.target.value;
+  e.target.value = "";
+  if (serial) navigate(`battery/${serial}`);
+};
+loadBatteryPicker();
 document.getElementById("search-btn").onclick = () => {
   navigate("");
   renderDashboard();

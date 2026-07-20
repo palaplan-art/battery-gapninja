@@ -13,10 +13,11 @@ def list_batteries(
     machine_code: str | None = None,
     end_user: str | None = None,
     status: models.BatteryStatus | None = None,
+    sort: str | None = None,
     db: Session = Depends(get_db),
 ):
     return crud.search_batteries(
-        db, q=q, machine_code=machine_code, end_user=end_user, status=status
+        db, q=q, machine_code=machine_code, end_user=end_user, status=status, sort=sort
     )
 
 

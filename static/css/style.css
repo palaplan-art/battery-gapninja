@@ -622,6 +622,29 @@ body {
 }
 .inline-link:hover { text-decoration: underline; }
 
+.open-machine-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  flex-shrink: 0;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.open-machine-btn:hover { background: var(--card-hover); }
+
+#battery-picker {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 11px 10px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  max-width: 190px;
+  cursor: pointer;
+}
+#battery-picker:focus { border-color: var(--accent); outline: none; }
+
 /* ---------- Excel sync ---------- */
 .sync-file { display: flex; flex-wrap: wrap; gap: 28px; font-size: 13.5px; }
 .sync-file .lbl {

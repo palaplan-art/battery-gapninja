@@ -52,6 +52,7 @@ class Machine(Base):
     next_calibration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Peripherals (from the GAPNINJA control list sheet)
     wifi_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    wifi_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     wifi_sn: Mapped[str | None] = mapped_column(String(128), nullable=True)
     barcode_scanner_sn: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pc_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -96,6 +97,9 @@ class Battery(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Touched whenever anything about this battery changes, so the dashboard can
+    # sort by most recently updated.
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     logs: Mapped[list["BatteryLog"]] = relationship(
         "BatteryLog",

@@ -19,6 +19,7 @@ class MachineFields(BaseModel):
     last_calibration_date: date | None = None
     next_calibration_date: date | None = None
     wifi_model: str | None = None
+    wifi_ip: str | None = None
     wifi_sn: str | None = None
     barcode_scanner_sn: str | None = None
     pc_model: str | None = None
@@ -134,6 +135,7 @@ class BatteryOut(BaseModel):
     status: BatteryStatus
     notes: str | None = None
     created_at: datetime
+    updated_at: datetime | None = None
 
     @computed_field
     @property

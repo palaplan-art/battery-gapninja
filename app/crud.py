@@ -1,9 +1,15 @@
 import re
+from datetime import datetime
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+
+
+def _touch(battery: models.Battery) -> None:
+    """Mark a battery as just changed (drives the 'Recently updated' sort)."""
+    battery.updated_at = datetime.now()
 
 SERIAL_PREFIX = "GNB-"
 SERIAL_DIGITS = 4
@@ -38,6 +44,7 @@ def search_batteries(
     machine_code: str | None = None,
     end_user: str | None = None,
     status: models.BatteryStatus | None = None,
+    sort: str | None = None,
 ) -> list[models.Battery]:
     query = db.query(models.Battery)
 
@@ -73,7 +80,15 @@ def search_batteries(
     if status:
         query = query.filter(models.Battery.status == status)
 
-    return query.order_by(models.Battery.serial.asc()).all()
+    results = query.order_by(models.Battery.serial.asc()).all()
+
+    if sort == "recent":
+        # Most recently changed first; never-changed rows fall to the bottom.
+        results.sort(
+            key=lambda b: (b.updated_at is None, -(b.updated_at or b.created_at).timestamp()
+                           if (b.updated_at or b.created_at) else 0)
+        )
+    return results
 
 
 def get_battery_by_serial(db: Session, serial: str) -> models.Battery | None:
@@ -210,6 +225,7 @@ def update_battery(
                 ),
             )
 
+    _touch(battery)
     db.commit()
     db.refresh(battery)
     return battery
@@ -224,6 +240,7 @@ def add_manual_log(
         models.ActionType.note,
         description=payload.description,
     )
+    _touch(battery)
     db.commit()
     db.refresh(log)
     return log
@@ -241,12 +258,16 @@ def update_log(
     db: Session, log: models.BatteryLog, payload: schemas.LogUpdate
 ) -> models.BatteryLog:
     log.description = payload.description
+    if log.battery:
+        _touch(log.battery)
     db.commit()
     db.refresh(log)
     return log
 
 
 def delete_log(db: Session, log: models.BatteryLog) -> None:
+    if log.battery:
+        _touch(log.battery)
     db.delete(log)
     db.commit()
 
@@ -260,6 +281,7 @@ def add_test(
     # Keep the battery's headline capacity/health in sync with the latest reading.
     if payload.capacity_after_charge_mah:
         battery.last_capacity_mah = payload.capacity_after_charge_mah
+    _touch(battery)
     db.commit()
     db.refresh(test)
     return test
@@ -283,12 +305,16 @@ def update_test(
         setattr(test, field, value)
     if payload.capacity_after_charge_mah:
         test.battery.last_capacity_mah = payload.capacity_after_charge_mah
+    if test.battery:
+        _touch(test.battery)
     db.commit()
     db.refresh(test)
     return test
 
 
 def delete_test(db: Session, test: models.BatteryTest) -> None:
+    if test.battery:
+        _touch(test.battery)
     db.delete(test)
     db.commit()
 

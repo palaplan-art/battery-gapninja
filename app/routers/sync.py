@@ -31,6 +31,8 @@ def sync_preview(db: Session = Depends(get_db)):
         raise HTTPException(400, "Microsoft Graph is not configured.")
     try:
         return excel_sync.build_diff(db)
+    except excel_sync.LayoutError as e:
+        raise HTTPException(409, str(e))
     except graph.GraphError as e:
         raise HTTPException(502, str(e))
 
@@ -52,5 +54,7 @@ def sync_apply(payload: ApplyRequest, db: Session = Depends(get_db)):
         )
         result["backup"] = backup
         return result
+    except excel_sync.LayoutError as e:
+        raise HTTPException(409, str(e))
     except graph.GraphError as e:
         raise HTTPException(502, str(e))

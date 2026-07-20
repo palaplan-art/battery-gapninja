@@ -1,8 +1,13 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import crud, schemas
 from ..database import get_db
+from ..services import excel_sync, graph
+
+logger = logging.getLogger("battery.machines")
 
 router = APIRouter(prefix="/api/machines", tags=["machines"])
 
@@ -32,11 +37,25 @@ def get_machine(code: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{code}", response_model=schemas.MachineOut)
-def update_machine(code: str, payload: schemas.MachineUpdate, db: Session = Depends(get_db)):
+def update_machine(
+    code: str,
+    payload: schemas.MachineUpdate,
+    push_to_excel: bool = True,
+    db: Session = Depends(get_db),
+):
     machine = crud.get_machine(db, code.strip().upper())
     if not machine:
         raise HTTPException(404, "Machine not found")
-    return crud.update_machine(db, machine, payload)
+    machine = crud.update_machine(db, machine, payload)
+
+    # Mirror the edit into the SharePoint workbook. Never let a Graph problem
+    # fail the save — the Sync page can always reconcile later.
+    if push_to_excel and graph.is_configured():
+        try:
+            excel_sync.push_machine(db, machine)
+        except (graph.GraphError, excel_sync.LayoutError) as e:
+            logger.warning("Excel push skipped for %s: %s", machine.code, e)
+    return machine
 
 
 # ---------------- Machine notes / logs ----------------

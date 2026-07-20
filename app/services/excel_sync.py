@@ -18,42 +18,97 @@ from sqlalchemy.orm import Session
 from .. import models
 from . import graph
 
-# Sheet layout (verified against the live workbook).
-HEADER_ROW = 5          # row holding "No. / User / Divison / ..."
-FIRST_DATA_ROW = 6
-MACHINE_CODE_COL = "G"  # Machine SN:
+# Column positions are resolved from the sheet's own header row rather than
+# hardcoded, so inserting/moving a column in the workbook cannot silently make
+# the sync read or write the wrong cells.
+MACHINE_CODE_HEADER = "Machine SN:"
 
-# app field -> spreadsheet column letter
-#
-# "install" is a composite field: the sheet's Installation Day column holds
-# either a real date or a status word ("Waiting", "Demo"). It maps to
-# Machine.install_date when it parses as a date, otherwise Machine.install_status.
-FIELD_COLUMNS = {
-    "customer": "B",
-    "division": "C",
-    "contact_person": "D",
-    "contact_phone": "E",
-    "system": "F",
-    "gauge_block_sn": "K",
-    "wifi_model": "L",
-    "wifi_sn": "M",
-    "barcode_scanner_sn": "N",
-    "pc_model": "O",
-    "pc_sn_tag": "P",
-    "remark": "Q",
-    "install": "R",
+# app field -> exact header label in the sheet
+FIELD_HEADERS = {
+    "customer": "User",
+    "division": "Divison",          # (sheet's own spelling)
+    "contact_person": "Contract Person",
+    "contact_phone": "Customer Tel.",
+    "system": "System",
+    "gauge_block_sn": "S/N",        # under "Gauge Block Info."
+    "wifi_model": "Model",          # under "Meash Wi-Fi Info."
+    "wifi_ip": "IP",
+    "wifi_sn": "S/N:",
+    "barcode_scanner_sn": "S/N.",   # under "Barcode Scanner"
+    "pc_model": "Model.",           # under "PC Info."
+    "pc_sn_tag": "S/N Tag",
+    "remark": "Remark",
+    "install": "Installation Day",
 }
+
+# Fields the sheet must expose for a sync to be considered safe.
+REQUIRED_FIELDS = {"customer", "division", "remark", "install"}
+
+# Optional fields — absent columns are simply skipped.
+OPTIONAL_FIELDS = {"wifi_ip"}
 
 INSTALL_FIELD = "install"
 EXCEL_EPOCH = date(1899, 12, 30)
 
 
-def _col_index(letter: str) -> int:
-    """'B' -> 1 (zero-based index into a row array starting at column A)."""
-    idx = 0
-    for ch in letter:
-        idx = idx * 26 + (ord(ch.upper()) - ord("A") + 1)
-    return idx - 1
+class LayoutError(RuntimeError):
+    """Raised when the sheet's header row cannot be understood."""
+
+
+def _col_letter(index: int) -> str:
+    """0 -> 'A', 25 -> 'Z', 26 -> 'AA' (index is relative to column A)."""
+    letters = ""
+    n = index + 1
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(ord("A") + rem) + letters
+    return letters
+
+
+def resolve_layout(values: list, start_row: int) -> dict:
+    """Locate the header row and map each app field to its column index.
+
+    Returns {"header_row", "first_data_row", "code_index", "columns": {field: idx}}.
+    """
+    header_offset = None
+    for offset, row in enumerate(values):
+        if any(_norm(c) == MACHINE_CODE_HEADER for c in row):
+            header_offset = offset
+            break
+    if header_offset is None:
+        raise LayoutError(
+            f"Could not find the header row (no '{MACHINE_CODE_HEADER}' cell). "
+            "The sheet layout may have changed — sync aborted for safety."
+        )
+
+    header = [_norm(c) for c in values[header_offset]]
+    label_to_index = {}
+    for i, label in enumerate(header):
+        if label and label not in label_to_index:
+            label_to_index[label] = i
+
+    columns = {}
+    missing = []
+    for field, label in FIELD_HEADERS.items():
+        if label in label_to_index:
+            columns[field] = label_to_index[label]
+        elif field not in OPTIONAL_FIELDS:
+            missing.append(f"{field} ('{label}')")
+
+    required_missing = [m for m in missing if m.split(" ")[0] in REQUIRED_FIELDS]
+    if required_missing:
+        raise LayoutError(
+            "These expected columns were not found in the sheet: "
+            + ", ".join(required_missing)
+            + ". Sync aborted so nothing is written to the wrong column."
+        )
+
+    return {
+        "header_row": start_row + header_offset,
+        "first_data_row": start_row + header_offset + 1,
+        "code_index": label_to_index[MACHINE_CODE_HEADER],
+        "columns": columns,
+    }
 
 
 def excel_serial_to_date(value) -> date | None:
@@ -76,24 +131,29 @@ def _norm(value) -> str:
     return str(value).strip()
 
 
-def read_excel_machines() -> tuple[dict[str, dict], dict[str, int]]:
-    """Return ({machine_code: {field: value}}, {machine_code: sheet_row})."""
+def read_excel_machines() -> tuple[dict[str, dict], dict[str, int], dict]:
+    """Return ({code: {field: value}}, {code: sheet_row}, layout)."""
     used = graph.read_used_range()
     values = used.get("values", [])
     address = used.get("address", "")
     # usedRange may not start at row 1; derive the offset from its address.
     try:
-        start_row = int(address.split("!")[1].split(":")[0].lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ$"))
+        start_row = int(
+            address.split("!")[1].split(":")[0].lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ$")
+        )
     except (IndexError, ValueError):
         start_row = 1
 
-    code_idx = _col_index(MACHINE_CODE_COL)
+    layout = resolve_layout(values, start_row)
+    code_idx = layout["code_index"]
+    columns = layout["columns"]
+
     machines: dict[str, dict] = {}
     rows: dict[str, int] = {}
 
     for offset, row in enumerate(values):
         sheet_row = start_row + offset
-        if sheet_row < FIRST_DATA_ROW:
+        if sheet_row < layout["first_data_row"]:
             continue
         if code_idx >= len(row):
             continue
@@ -102,8 +162,7 @@ def read_excel_machines() -> tuple[dict[str, dict], dict[str, int]]:
             continue  # e.g. battery-stock rows have no machine SN
 
         record: dict = {}
-        for field, letter in FIELD_COLUMNS.items():
-            i = _col_index(letter)
+        for field, i in columns.items():
             raw = row[i] if i < len(row) else ""
             if field == INSTALL_FIELD:
                 d = excel_serial_to_date(raw)
@@ -114,12 +173,12 @@ def read_excel_machines() -> tuple[dict[str, dict], dict[str, int]]:
         machines[code] = record
         rows[code] = sheet_row
 
-    return machines, rows
+    return machines, rows, layout
 
 
-def _app_values(machine: models.Machine) -> dict:
+def _app_values(machine: models.Machine, fields=None) -> dict:
     out = {}
-    for field in FIELD_COLUMNS:
+    for field in (fields or FIELD_HEADERS):
         if field == INSTALL_FIELD:
             # A real date wins; otherwise fall back to the status word.
             if machine.install_date:
@@ -143,7 +202,8 @@ def _baseline(machine: models.Machine) -> dict:
 
 def build_diff(db: Session) -> dict:
     """Compare Excel vs app against the stored baseline. Read-only."""
-    excel, rows = read_excel_machines()
+    excel, rows, layout = read_excel_machines()
+    fields = list(layout["columns"].keys())
     db_machines = {m.code.upper(): m for m in db.query(models.Machine).all()}
 
     to_app: list[dict] = []       # apply Excel -> app
@@ -157,10 +217,10 @@ def build_diff(db: Session) -> dict:
         if machine is None:
             only_in_excel.append(code)
             continue
-        app_vals = _app_values(machine)
+        app_vals = _app_values(machine, fields)
         base = _baseline(machine)
 
-        for field in FIELD_COLUMNS:
+        for field in fields:
             ex_val = ex.get(field, "")
             app_val = app_vals.get(field, "")
             base_val = base.get(field, None)
@@ -223,6 +283,8 @@ def apply_sync(
     """
     conflict_resolution = conflict_resolution or {}
     diff = build_diff(db)
+    _, _, layout = read_excel_machines()
+    columns = layout["columns"]
     db_machines = {m.code.upper(): m for m in db.query(models.Machine).all()}
 
     applied_to_app = 0
@@ -256,7 +318,9 @@ def apply_sync(
             row = entry.get("row")
             if not row:
                 continue
-            col = FIELD_COLUMNS[entry["field"]]
+            if entry["field"] not in columns:
+                continue
+            col = _col_letter(columns[entry["field"]])
             value = entry["app"]
             if entry["field"] == INSTALL_FIELD and value:
                 # Write a real date back as an Excel serial; leave status text alone.
@@ -270,11 +334,11 @@ def apply_sync(
     db.commit()
 
     # 4) Refresh the baseline so the next run can tell which side changed.
-    excel_after, _ = read_excel_machines()
+    excel_after, _, layout_after = read_excel_machines()
+    after_fields = list(layout_after["columns"].keys())
     for code, machine in db_machines.items():
         if code in excel_after:
-            merged = _app_values(machine)
-            machine.sync_baseline = json.dumps(merged)
+            machine.sync_baseline = json.dumps(_app_values(machine, after_fields))
     db.commit()
 
     return {
@@ -283,6 +347,50 @@ def apply_sync(
         "skipped_conflicts": skipped_conflicts,
         "wrote_excel": write_excel,
     }
+
+
+def push_machine(db: Session, machine: models.Machine) -> dict:
+    """Write one machine's app-side values straight back into the sheet.
+
+    Only fields where the sheet still matches the stored baseline are written —
+    if someone edited that cell in Excel since the last sync it is treated as a
+    conflict and left alone for the Sync page to resolve.
+    """
+    excel, rows, layout = read_excel_machines()
+    columns = layout["columns"]
+    fields = list(columns.keys())
+    code = machine.code.upper()
+    if code not in excel:
+        return {"written": 0, "conflicts": [], "reason": "machine not in sheet"}
+
+    row = rows[code]
+    ex = excel[code]
+    app_vals = _app_values(machine, fields)
+    base = _baseline(machine)
+
+    written, conflicts = 0, []
+    for field in fields:
+        app_val = app_vals.get(field, "")
+        ex_val = ex.get(field, "")
+        base_val = base.get(field, None)
+        if app_val == ex_val:
+            continue
+        if base_val is not None and ex_val != base_val:
+            conflicts.append(field)  # Excel changed too — leave it for manual review
+            continue
+        value = app_val
+        if field == INSTALL_FIELD and value:
+            try:
+                value = date_to_excel_serial(date.fromisoformat(value))
+            except ValueError:
+                pass
+        graph.write_cell(f"{_col_letter(columns[field])}{row}", value if value != "" else "")
+        written += 1
+
+    if written:
+        machine.sync_baseline = json.dumps(_app_values(machine, fields))
+        db.commit()
+    return {"written": written, "conflicts": conflicts}
 
 
 def backup_workbook() -> dict:
